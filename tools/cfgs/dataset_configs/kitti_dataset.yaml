@@ -13,7 +13,7 @@ INFO_PATH: {
     'test': [kitti_infos_val.pkl],
 }
 
-GET_ITEM_LIST: ["points"]
+GET_ITEM_LIST: ["points", "gt_boxes2d", "calib_matricies"]
 FOV_POINTS_ONLY: True
 
 DATA_AUGMENTOR:

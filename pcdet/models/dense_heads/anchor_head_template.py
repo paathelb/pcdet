@@ -6,10 +6,12 @@ from ...utils import box_coder_utils, common_utils, loss_utils
 from .target_assigner.anchor_generator import AnchorGenerator
 from .target_assigner.atss_target_assigner import ATSSTargetAssigner
 from .target_assigner.axis_aligned_target_assigner import AxisAlignedTargetAssigner
-
+from .target_assigner.weakly2d_3d_target_assigner import Weakly2D3DTargetAssigner
 
 class AnchorHeadTemplate(nn.Module):
-    def __init__(self, model_cfg, num_class, class_names, grid_size, point_cloud_range, predict_boxes_when_training):
+    def __init__(self, model_cfg, num_class,
+                       class_names, grid_size, 
+                       point_cloud_range, predict_boxes_when_training):
         super().__init__()
         self.model_cfg = model_cfg
         self.num_class = num_class
@@ -66,6 +68,14 @@ class AnchorHeadTemplate(nn.Module):
                 box_coder=self.box_coder,
                 match_height=anchor_target_cfg.MATCH_HEIGHT
             )
+        # TODO modify the hyper parameter
+        elif anchor_target_cfg.NAME == "Weakly2D3DTargetAssigner":
+            target_assigner = Weakly2D3DTargetAssigner(
+                model_cfg=self.model_cfg,
+                class_names=self.class_names,
+                topk=5,
+                rank_by_num_points=True,
+                points_inside_2dbox_only=True,)
         else:
             raise NotImplementedError
         return target_assigner
@@ -86,17 +96,19 @@ class AnchorHeadTemplate(nn.Module):
             loss_utils.WeightedCrossEntropyLoss()
         )
 
-    def assign_targets(self, gt_boxes):
+    def assign_targets(self, gt_boxes, gt_boxes2d=None, **kwargs):
         """
         Args:
             gt_boxes: (B, M, 8)
         Returns:
-
         """
+        # if gt_boxes
         targets_dict = self.target_assigner.assign_targets(
-            self.anchors, gt_boxes
+            self.anchors, gt_boxes, gt_boxes2d,
+            **kwargs,
         )
         return targets_dict
+
 
     def get_cls_layer_loss(self):
         cls_preds = self.forward_ret_dict['cls_preds']
@@ -186,6 +198,7 @@ class AnchorHeadTemplate(nn.Module):
                                    box_preds.shape[-1])
         # sin(a - b) = sinacosb-cosasinb
         box_preds_sin, reg_targets_sin = self.add_sin_difference(box_preds, box_reg_targets)
+        import pdb; pdb.set_trace()
         loc_loss_src = self.reg_loss_func(box_preds_sin, reg_targets_sin, weights=reg_weights)  # [N, M]
         loc_loss = loc_loss_src.sum() / batch_size
 
