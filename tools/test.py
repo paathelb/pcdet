@@ -97,6 +97,7 @@ def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir
 
     while True:
         # check whether there is checkpoint which is not evaluated
+
         cur_epoch_id, cur_ckpt = get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args)
         if cur_epoch_id == -1 or int(float(cur_epoch_id)) < args.start_epoch:
             wait_second = 30
@@ -108,7 +109,7 @@ def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir
             if total_time > args.max_waiting_mins * 60 and (first_eval is False):
                 break
             continue
-
+        import pdb; pdb.set_trace()
         total_time = 0
         first_eval = False
 

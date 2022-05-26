@@ -28,8 +28,6 @@ class Weakly2D3DTargetAssigner(object):
         self.rank_by_num_points = rank_by_num_points
         self.points_inside_2dbox_only=points_inside_2dbox_only
         
-
-        
         self.matched_thresholds = {}
         self.unmatched_thresholds = {}
         for config in anchor_generator_cfg:
@@ -39,6 +37,7 @@ class Weakly2D3DTargetAssigner(object):
             # self.num_points_weight = config['num_points_weight']
 
         self.use_multihead = model_cfg.get('USE_MULTIHEAD', False)
+
 
     def assign_targets(self, all_anchors, gt_boxes, gt_boxes2d_with_classes,
                          trans_lidar_to_cam, trans_cam_to_img, points, image_shape):
@@ -51,8 +50,7 @@ class Weakly2D3DTargetAssigner(object):
         Returns:
 
         """
-
-
+        
         bbox2d_targets = []
         cls_labels = []
         reg_weights = []
@@ -154,19 +152,20 @@ class Weakly2D3DTargetAssigner(object):
             
         return all_targets_dict
 
+
     def assign_targets_single(self, anchors, anchors3d, gt_boxes,
-                                 gt_classes, matched_threshold=0.6,
+                                 gt_classes, matched_threshold=0.60,
                                  unmatched_threshold=0.45, trans_lidar_to_cam=None,
                                  trans_cam_to_img=None, points=None, code_size=4):
-
+        
         num_anchors = anchors.shape[0]
         num_gt = gt_boxes.shape[0]
 
         labels = torch.ones((num_anchors,), dtype=torch.int32, device=anchors.device) * -1
-        gt_ids = torch.ones((num_anchors,), dtype=torch.int32, device=anchors.device) * -1
+        gt_ids = torch.ones((num_anchors,), dtype=torch.int32, device=anchors.device) * -1 # IDs of GT boxes that has huge IoU to the anchor
 
         if len(gt_boxes) > 0 and anchors.shape[0] > 0:
-            anchor_by_gt_overlap = boxes_iou_normal(anchors[:, 0:4], gt_boxes[:, 0:4]) 
+            anchor_by_gt_overlap = boxes_iou_normal(anchors[:, 0:4], gt_boxes[:, 0:4]) #Intersection of the 2D anchors and the 2D ground truth boxes
 
             anchor_to_gt_argmax = torch.from_numpy(anchor_by_gt_overlap.cpu().detach().numpy().argmax(axis=1)).cuda()
             anchor_to_gt_max = anchor_by_gt_overlap[torch.arange(num_anchors, device=anchors.device), anchor_to_gt_argmax]
@@ -176,19 +175,19 @@ class Weakly2D3DTargetAssigner(object):
             empty_gt_mask = gt_to_anchor_max == 0
             gt_to_anchor_max[empty_gt_mask] = -1
 
-            anchors_with_max_overlap = (anchor_by_gt_overlap == gt_to_anchor_max).nonzero()[:, 0]
-            gt_inds_force = anchor_to_gt_argmax[anchors_with_max_overlap]
+            anchors_with_max_overlap = (anchor_by_gt_overlap == gt_to_anchor_max).nonzero()[:, 0] #what anchors have the max overlap to each of the gt boxes
+            gt_inds_force = anchor_to_gt_argmax[anchors_with_max_overlap] #what gt indices correspond to these anchors with max overlap
             labels[anchors_with_max_overlap] = gt_classes[gt_inds_force]
             gt_ids[anchors_with_max_overlap] = gt_inds_force.int()
 
-            pos_inds = anchor_to_gt_max >= matched_threshold
-            gt_inds_over_thresh = anchor_to_gt_argmax[pos_inds]
+            pos_inds = anchor_to_gt_max >= matched_threshold #what anchors have IoU >= matched threshold
+            gt_inds_over_thresh = anchor_to_gt_argmax[pos_inds] #what is the GT index corresponding to those anchors with IoU >= matched threshold
             labels[pos_inds] = gt_classes[gt_inds_over_thresh]
             gt_ids[pos_inds] = gt_inds_over_thresh.int()
             bg_inds = (anchor_to_gt_max < unmatched_threshold).nonzero()[:, 0]
 
             index = torch.arange(num_anchors)
-            for gt_idx in range(num_gt):
+            for gt_idx in range(num_gt): # sort anchors per ground truth box
                 pos_anchors_mask =  gt_ids == gt_idx
 
                 pos_anchors_iou = anchor_by_gt_overlap[pos_anchors_mask, gt_idx]
@@ -197,10 +196,9 @@ class Weakly2D3DTargetAssigner(object):
                 sort_pos_anchors_iou, sort_rank = pos_anchors_iou.sort(descending=True)
 
                 pos_anchors3d = pos_anchors3d[sort_rank]
-                with torch.no_grad():
+                with torch.no_grad(): #Why put here?
                     num_points_in_anchors = \
-                            [
-                                (points_in_boxes_gpu(points[:,1:4].unsqueeze(0), pos_anchor3d.reshape(1,1,7))>=0).sum().item()
+                            [(points_in_boxes_gpu(points[:,1:4].unsqueeze(0), pos_anchor3d.reshape(1,1,7))>=0).sum().item()
                                                  for pos_anchor3d in pos_anchors3d]
                     # the top k only consider number of points # ignore anchor size since all of anchors have the same size
                     # TODO modify to density 
@@ -212,19 +210,18 @@ class Weakly2D3DTargetAssigner(object):
                 pos_idx = index[pos_anchors_mask][sort_rank][topk_idx]
                 gt_ids[pos_anchors_mask] = -1
                 gt_ids[pos_idx] = gt_idx
-                labels[pos_anchors_mask] = -1
+                #labels[pos_anchors_mask] = -1
                 labels[pos_idx] = gt_classes[gt_idx]
-
-
 
             # do the topk filtering
         else:
             bg_inds = torch.arange(num_anchors, device=anchors.device)
-
+        
         bbox2d_targets = anchors.new_zeros((num_anchors, 4))
         if len(gt_boxes) > 0 and anchors.shape[0] > 0:
             bbox2d_targets = gt_boxes[gt_ids.long(), :]
 #             bbox2d_targets[fg_inds, :] = self.box_coder.encode_torch(fg_gt_boxes2d, fg_anchors)
+        
         reg_weights = anchors.new_zeros((num_anchors,))
 
 #         if self.norm_by_num_examples:
@@ -232,8 +229,9 @@ class Weakly2D3DTargetAssigner(object):
 #             num_examples = num_examples if num_examples > 1.0 else 1.0
 #             reg_weights[labels > 0] = 1.0 / num_examples
 #         else:
-        reg_weights[labels > 0] = 1.0
-        
+        #reg_weights[labels > 0] = 1.0 # TODO Change the way this is defined to align with the topk anchors
+        reg_weights[gt_ids != -1] = 1.0
+        #import pdb; pdb.set_trace() 
         ret_dict = {
             'box_cls_labels': labels,
             'box2d_reg_targets': bbox2d_targets,
@@ -253,8 +251,10 @@ class Weakly2D3DTargetAssigner(object):
      
         return torch.from_numpy(batch_non_ground).float().cuda()
 
+
     def generate_anchors2d(self, anchors, trans_lidar_to_cam, trans_cam_to_img, image_shape):
         anchors = torch.stack(anchors, dim=0)
+        #import pdb; pdb.set_trace()
         N, X, Y, Z, level, anchor_type, code_size = anchors.shape 
         anchors = anchors.reshape(-1, code_size)
         
@@ -273,16 +273,16 @@ class Weakly2D3DTargetAssigner(object):
         
         # trans_cam_to_img = torch.tensor(trans_cam_to_img[index]).reshape(1, 3, 4)
         roty = anchors_camera[:,6].reshape(1,-1)
-            
         dim = anchors_camera[:,3:6]
         loc = anchors_camera[:,0:3]
-        trans_cam_to_img = trans_cam_to_img.reshape(1, 3,4 )
+        trans_cam_to_img = trans_cam_to_img.reshape(1,3,4)
         anchors_2d = GeoTransTorch.encode_box2d(roty, dim, loc, trans_cam_to_img, (w, h)) 
         anchors_2d = torch.unsqueeze(anchors_2d, dim=0)
 
         anchors_2d = anchors_2d.reshape(N, X, Y, Z, level, anchor_type, 4)
         anchors_2d = [i for i in anchors_2d]
         return anchors_2d
+
 
     def select_only_points_inside_2dbbox(self, points, tran_lidar_to_cam, tran_cam_to_img, gt_2d):
 

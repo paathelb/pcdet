@@ -7,9 +7,9 @@ class PointPillar(Detector3DTemplate):
         self.module_list = self.build_networks()
 
     def forward(self, batch_dict):
+        
         for cur_module in self.module_list:
             batch_dict = cur_module(batch_dict)
-
         if self.training:
             loss, tb_dict, disp_dict = self.get_training_loss()
 
@@ -22,6 +22,7 @@ class PointPillar(Detector3DTemplate):
             return pred_dicts, recall_dicts
 
     def get_training_loss(self):
+        #import pdb; pdb.set_trace()
         disp_dict = {}
 
         loss_rpn, tb_dict = self.dense_head.get_loss()

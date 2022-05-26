@@ -46,54 +46,46 @@ class AnchorHeadWeakly(AnchorHeadSingle):
     def get_box_2d_reg_layer_loss(self, weakly2d_assigner=False):
         # add the comments
         pred_boxes3d = self.forward_ret_dict["batch_box_preds"]
-
         box_cls_labels = self.forward_ret_dict["box_cls_labels"]
         batch_size = int(pred_boxes3d.shape[0])
 
         lidar2cam = self.forward_ret_dict["trans_lidar_to_cam"]
         cam2img = self.forward_ret_dict["trans_cam_to_img"]
 
-        lidar2cam = [torch.tensor(lidar2cam[idx]) for idx in range(batch_size)]
-        cam2img = [torch.tensor(cam2img[idx]) for idx in range(batch_size)]
+        #lidar2cam = [torch.tensor(lidar2cam[idx]) for idx in range(batch_size)]
+        #cam2img = [torch.tensor(cam2img[idx]) for idx in range(batch_size)]
+
+        lidar2cam = [lidar2cam[idx].clone().detach() for idx in range(batch_size)]
+        cam2img = [cam2img[idx].clone().detach() for idx in range(batch_size)]
 
         # V2C = [torch.tensor(calib[idx].V2C) for idx in range(batch_size)]
         # R0 = [torch.tensor(calib[idx].R0) for idx in range(batch_size)]
-        # convert to cuda
 
+        # convert to cuda
         lidar2cam = torch.stack(lidar2cam, dim=0).to(pred_boxes3d.device)
         cam2img = torch.stack(cam2img, dim=0).to(pred_boxes3d.device)
         pred_bboxes_camera = torch.stack([boxes3d_lidar_to_kitti_camera_nocopy(
                                 pred_boxes3d[idx], lidar2cam[idx]) for idx in range(batch_size)], dim=0)
         # P2 = [torch.tensor(calib[idx].P2) for idx in range(batch_size)]
         # P2 = torch.stack(P2, dim=0).to(pred_boxes3d.device)
+
         # convert to camera
         cam2img = cam2img.unsqueeze(1).expand(-1, pred_boxes3d.shape[1], -1, -1)
         rotys = pred_bboxes_camera[:,:,-1].reshape(-1)
         dims =  pred_bboxes_camera[:,:,3:6].reshape(-1,3)
-        # dims = torch.roll(dims, dims=[1], shifts=-1)
-        # locs = torch.roll(pred_boxes3d_camera[:,:,:3].reshape(-1,3), dims=[1], shifts=2)
         locs = pred_bboxes_camera[:,:,:3].reshape(-1,3)
-        img_size = torch.max(self.forward_ret_dict['image_shape'], dim=0)[0]
+        img_size = torch.max(self.forward_ret_dict['image_shape'], dim=0)[0] #Why use the max here?
         pred_boxes2d = GeoTransTorch.encode_box2d(
-            rotys, dims, locs, cam2img.reshape(-1,3,4), img_size=torch.flip(img_size, dims=[0]))
-
+                    rotys, dims, locs, cam2img.reshape(-1,3,4), img_size=torch.flip(img_size, dims=[0]))
 
         # pred_boxes3d = [calib[idx].corners3d_to_image_boxes(pred_boxes3d[idx]) for idx in range(batch_size)]
-        # pred_
         positives = box_cls_labels > 0
         positives = positives.reshape(-1)
         pred_boxes2d = pred_boxes2d[positives]
-        # loss = (pred_boxes2d[positives] - )
         targets_2d = self.forward_ret_dict["box2d_reg_targets"].reshape(-1,4)[positives]
 
-        # import pdb; pdb.set_trace()
-        loss = F.smooth_l1_loss(pred_boxes2d, targets_2d) # use l1 loss here
-
-
-        # calib_p2 = [calib.P2 for calib in self.forward_ret_dict["calib"]]
-
-            # self.forward_ret_dict["calib"][index].P2 for index in range(len(self.))
-        # calib_p2 = torch.
+        loss = F.smooth_l1_loss(pred_boxes2d, targets_2d) # Why use l1 loss here?
+        
         # check the shape, corresponding dimension, how to convert to 2D bounding boxes
         loss_dict = {}
         loss_dict["weakly_2d_3d_reg_loss"] = loss.item()
@@ -109,13 +101,11 @@ class AnchorHeadWeakly(AnchorHeadSingle):
     #     Returns:
     #     """
     #     # if gt_boxes
-    #     import pdb; pdb.set_trace()
     #     if True:
     #         targets_dict = self.target_assigner.assign_targets(
     #             self.anchors, gt_boxes, gt_boxes2d
     #         )
     #     else:
-    #         import pdb; pdb.set_trace()
     #         target_dict = self.target_assigner.assign_targets(
     #             self.anchors, gt_bboxes2d, trans_lidar2cam,
     #             trans_cam2img, points, image_shape,)
@@ -168,9 +158,6 @@ class AnchorHeadWeakly(AnchorHeadSingle):
             self.forward_ret_dict['gt_boxes'] = data_dict['gt_boxes']
             self.forward_ret_dict['gt_boxes2d'] = data_dict['gt_boxes2d']
             self.forward_ret_dict['image_shape'] = data_dict['image_shape']
-
-            
-
 
             batch_cls_preds, batch_box_preds = self.generate_predicted_boxes(
                 batch_size=data_dict['batch_size'],

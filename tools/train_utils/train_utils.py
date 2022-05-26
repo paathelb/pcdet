@@ -27,7 +27,16 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
             dataloader_iter = iter(train_loader)
             batch = next(dataloader_iter)
             print('new iters')
-        
+
+        # if '002055' in batch['frame_id']:
+        #     import pdb; pdb.set_trace() 
+        # if '003680' in batch['frame_id']:
+        #     import pdb; pdb.set_trace() 
+        # if '001899' in batch['frame_id']:
+        #     import pdb; pdb.set_trace() 
+        # if '002055' in batch['frame_id']:
+        #     import pdb; pdb.set_trace() 
+
         data_timer = time.time()
         cur_data_time = data_timer - end
 

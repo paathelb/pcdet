@@ -39,6 +39,7 @@ class AnchorHeadSingle(AnchorHeadTemplate):
         nn.init.normal_(self.conv_box.weight, mean=0, std=0.001)
 
     def forward(self, data_dict):
+        import pdb; pdb.set_trace() 
         spatial_features_2d = data_dict['spatial_features_2d']
 
         cls_preds = self.conv_cls(spatial_features_2d)
@@ -84,9 +85,6 @@ class AnchorHeadSingle(AnchorHeadTemplate):
             self.forward_ret_dict['gt_boxes'] = data_dict['gt_boxes']
             self.forward_ret_dict['gt_boxes2d'] = data_dict['gt_boxes2d']
             self.forward_ret_dict['image_shape'] = data_dict['image_shape']
-
-            
-
 
             batch_cls_preds, batch_box_preds = self.generate_predicted_boxes(
                 batch_size=data_dict['batch_size'],

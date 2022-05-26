@@ -73,9 +73,9 @@ class AnchorHeadTemplate(nn.Module):
             target_assigner = Weakly2D3DTargetAssigner(
                 model_cfg=self.model_cfg,
                 class_names=self.class_names,
-                topk=5,
+                topk=20,
                 rank_by_num_points=True,
-                points_inside_2dbox_only=True,)
+                points_inside_2dbox_only=False,)
         else:
             raise NotImplementedError
         return target_assigner
@@ -198,7 +198,6 @@ class AnchorHeadTemplate(nn.Module):
                                    box_preds.shape[-1])
         # sin(a - b) = sinacosb-cosasinb
         box_preds_sin, reg_targets_sin = self.add_sin_difference(box_preds, box_reg_targets)
-        import pdb; pdb.set_trace()
         loc_loss_src = self.reg_loss_func(box_preds_sin, reg_targets_sin, weights=reg_weights)  # [N, M]
         loc_loss = loc_loss_src.sum() / batch_size
 
