@@ -58,6 +58,7 @@ def parse_config():
 
 def main():
     args, cfg = parse_config()
+    #import pdb; pdb.set_trace() 
     if args.launcher == 'none':
         dist_train = False
         total_gpus = 1
@@ -118,13 +119,13 @@ def main():
     model.cuda()
 
     optimizer = build_optimizer(model, cfg.OPTIMIZATION)
-
+  
     # load checkpoint if it is possible
     start_epoch = it = 0
     last_epoch = -1
     if args.pretrained_model is not None:
         model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist_train, logger=logger)
-
+    
     if args.ckpt is not None:
         it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist_train, optimizer=optimizer, logger=logger)
         last_epoch = start_epoch + 1
@@ -184,6 +185,7 @@ def main():
         batch_size=args.batch_size,
         dist=dist_train, workers=args.workers, logger=logger, training=False
     )
+     
     eval_output_dir = output_dir / 'eval' / 'eval_with_train'
     eval_output_dir.mkdir(parents=True, exist_ok=True)
     args.start_epoch = max(args.epochs - args.num_epochs_to_eval, 0)  # Only evaluate the last args.num_epochs_to_eval epochs

@@ -40,7 +40,7 @@ class AxisAlignedTargetAssigner(object):
             gt_boxes: (B, M, 8)
         Returns:
         """
-
+        
         bbox_targets = []
         bbox2d_targets = []
         cls_labels = []
@@ -229,6 +229,7 @@ class AxisAlignedTargetAssigner(object):
             else:
                 labels[bg_inds] = 0
                 labels[anchors_with_max_overlap] = gt_classes[gt_inds_force]
+
         bbox_targets = anchors.new_zeros((num_anchors, self.box_coder.code_size))
         bbox2d_targets = anchors.new_zeros((num_anchors, 4))
         if len(gt_boxes) > 0 and anchors.shape[0] > 0:
@@ -239,6 +240,7 @@ class AxisAlignedTargetAssigner(object):
                 fg_gt_boxes2d = gt_boxes2d[anchor_to_gt_argmax[fg_inds], :]
                 # bbox2d_targets[fg_inds, :] = self.box_coder.encode_torch(fg_gt_boxes2d, fg_anchors)
                 bbox2d_targets[fg_inds, :] = fg_gt_boxes2d
+
         reg_weights = anchors.new_zeros((num_anchors,))
 
         if self.norm_by_num_examples:

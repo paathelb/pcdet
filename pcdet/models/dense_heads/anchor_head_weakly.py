@@ -159,6 +159,7 @@ class AnchorHeadWeakly(AnchorHeadSingle):
             self.forward_ret_dict['gt_boxes2d'] = data_dict['gt_boxes2d']
             self.forward_ret_dict['image_shape'] = data_dict['image_shape']
 
+            #Why store this?
             batch_cls_preds, batch_box_preds = self.generate_predicted_boxes(
                 batch_size=data_dict['batch_size'],
                 cls_preds=cls_preds, box_preds=box_preds, dir_cls_preds=dir_cls_preds
@@ -166,6 +167,7 @@ class AnchorHeadWeakly(AnchorHeadSingle):
             self.forward_ret_dict['batch_cls_preds'] = batch_cls_preds
             self.forward_ret_dict['batch_box_preds'] = batch_box_preds
             self.forward_ret_dict['cls_preds_normalized'] = False
+
         if not self.training or self.predict_boxes_when_training:
             batch_cls_preds, batch_box_preds = self.generate_predicted_boxes(
                 batch_size=data_dict['batch_size'],

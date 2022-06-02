@@ -32,4 +32,4 @@ class PointPillar(Detector3DTemplate):
         }
 
         loss = loss_rpn
-        return loss, tb_dict, disp_dict
+        return loss, tb_dict, disp_dict 

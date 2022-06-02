@@ -72,7 +72,7 @@ MODEL:
         ]
 
         TARGET_ASSIGNER_CONFIG:
-            NAME: Weakly2D3DTargetAssigner
+            NAME: Weakly2D3DTargetAssigner #AxisAlignedTargetAssigner 
             POS_FRACTION: -1.0
             SAMPLE_SIZE: 512
             NORM_BY_NUM_EXAMPLES: False
@@ -107,7 +107,7 @@ OPTIMIZATION:
     NUM_EPOCHS: 80
 
     OPTIMIZER: adam_onecycle
-    LR: 0.000175 #0.003/8
+    LR: 0.000375 #0.003/8
     WEIGHT_DECAY: 0.01
     MOMENTUM: 0.9
 

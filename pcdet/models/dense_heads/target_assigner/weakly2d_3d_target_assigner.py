@@ -12,13 +12,13 @@ from pcdet.ops.roiaware_pool3d.roiaware_pool3d_utils import points_in_boxes_gpu
 # from pcdet.models.dense_heads.fast_ground_removal.ground_removal import Processor
 from pcdet.utils.box_utils import boxes3d_lidar_to_kitti_camera_nocopy
 from pcdet.utils.box_utils import boxes_iou_normal
+from pcdet.utils.box_utils import boxes3d_nearest_bev_iou
 
 class Weakly2D3DTargetAssigner(object):
     def __init__(self, model_cfg, class_names, 
                         topk, rank_by_num_points, 
                         points_inside_2dbox_only):
         super().__init__()
-        # import pdb; pdb.set_trace(0)
         anchor_generator_cfg = model_cfg.ANCHOR_GENERATOR_CONFIG
         anchor_target_cfg = model_cfg.TARGET_ASSIGNER_CONFIG
         self.class_names = np.array(class_names)
@@ -48,9 +48,8 @@ class Weakly2D3DTargetAssigner(object):
             points
             image_shape
         Returns:
-
         """
-        
+
         bbox2d_targets = []
         cls_labels = []
         reg_weights = []
@@ -59,14 +58,23 @@ class Weakly2D3DTargetAssigner(object):
         # Check if there are gt classes
         gt_classes = gt_boxes2d_with_classes[:,:,-1]
         gt_boxes2d = gt_boxes2d_with_classes
+        gt_boxes3d = gt_boxes
         
         for idx in range(batch_size):
             cur_gt = gt_boxes2d[idx]
-            cnt = cur_gt.__len__() - 1
-            while cnt > 0 and cur_gt[cnt].sum() == 0:
-                cnt -= 1
+            cur_gt_3d = gt_boxes3d[idx]
+
+            if True:
+                cnt = cur_gt_3d.__len__() - 1
+                while cnt > 0 and cur_gt_3d[cnt].sum() == 0:
+                    cnt -= 1
+            else: 
+                cnt = cur_gt.__len__() - 1
+                while cnt > 0 and cur_gt[cnt].sum() == 0:
+                    cnt -= 1
 
             cur_gt = cur_gt[:cnt + 1]
+            cur_gt_3d = cur_gt_3d[:cnt + 1]
 #             cur_gt_classes = gt_classes[k][:cnt + 1].int()
             cur_gt_classes = torch.tensor((cnt+1)*[1], device=cur_gt.device).int()
 
@@ -74,14 +82,13 @@ class Weakly2D3DTargetAssigner(object):
             
             all_anchors2d = self.generate_anchors2d(
                 all_anchors, trans_lidar_to_cam[idx], 
-                trans_cam_to_img[idx], image_shape=image_shape[idx])     
-            
+                trans_cam_to_img[idx], image_shape=image_shape[idx])     # TODO Double check the code
             
             points_mask = points[:,0]==idx
             points_idx = points[points_mask]
             # Only consider points inside GT 2D Bounding Boxes
 
-            if self.points_inside_2dbox_only:
+            if self.points_inside_2dbox_only: #set to False; causes error to 2dbox without points inside
                 points_idx = self.select_only_points_inside_2dbbox(
                                                 points_idx, 
                                                 trans_lidar_to_cam[idx], 
@@ -103,16 +110,18 @@ class Weakly2D3DTargetAssigner(object):
                     anchors3d = anchors3d.view(-1, anchors3d.shape[-1])
                     selected_classes = cur_gt_classes[mask]
                 
+                #import pdb; pdb.set_trace()
                 single_target = self.assign_targets_single(
                     anchors,
                     anchors3d,
-                    cur_gt[mask],
+                    cur_gt_3d[mask],
                     gt_classes=selected_classes,
                     matched_threshold=self.matched_thresholds[anchor_class_name],
                     unmatched_threshold=self.unmatched_thresholds[anchor_class_name],
                     trans_lidar_to_cam=trans_lidar_to_cam[idx],
                     trans_cam_to_img=trans_cam_to_img[idx],
                     points=points_idx,
+                    gt_boxes2d = cur_gt[mask]
                 )
                 target_list.append(single_target)
 
@@ -156,7 +165,7 @@ class Weakly2D3DTargetAssigner(object):
     def assign_targets_single(self, anchors, anchors3d, gt_boxes,
                                  gt_classes, matched_threshold=0.60,
                                  unmatched_threshold=0.45, trans_lidar_to_cam=None,
-                                 trans_cam_to_img=None, points=None, code_size=4):
+                                 trans_cam_to_img=None, points=None, code_size=4, gt_boxes2d=None):
         
         num_anchors = anchors.shape[0]
         num_gt = gt_boxes.shape[0]
@@ -165,7 +174,8 @@ class Weakly2D3DTargetAssigner(object):
         gt_ids = torch.ones((num_anchors,), dtype=torch.int32, device=anchors.device) * -1 # IDs of GT boxes that has huge IoU to the anchor
 
         if len(gt_boxes) > 0 and anchors.shape[0] > 0:
-            anchor_by_gt_overlap = boxes_iou_normal(anchors[:, 0:4], gt_boxes[:, 0:4]) #Intersection of the 2D anchors and the 2D ground truth boxes
+            #anchor_by_gt_overlap = boxes_iou_normal(anchors[:, 0:4], gt_boxes[:, 0:4]) #Intersection of the 2D anchors and the 2D ground truth boxes
+            anchor_by_gt_overlap = boxes3d_nearest_bev_iou(anchors3d[:, 0:7], gt_boxes[:, 0:7])
 
             anchor_to_gt_argmax = torch.from_numpy(anchor_by_gt_overlap.cpu().detach().numpy().argmax(axis=1)).cuda()
             anchor_to_gt_max = anchor_by_gt_overlap[torch.arange(num_anchors, device=anchors.device), anchor_to_gt_argmax]
@@ -185,6 +195,7 @@ class Weakly2D3DTargetAssigner(object):
             labels[pos_inds] = gt_classes[gt_inds_over_thresh]
             gt_ids[pos_inds] = gt_inds_over_thresh.int()
             bg_inds = (anchor_to_gt_max < unmatched_threshold).nonzero()[:, 0]
+            
 
             index = torch.arange(num_anchors)
             for gt_idx in range(num_gt): # sort anchors per ground truth box
@@ -196,6 +207,7 @@ class Weakly2D3DTargetAssigner(object):
                 sort_pos_anchors_iou, sort_rank = pos_anchors_iou.sort(descending=True)
 
                 pos_anchors3d = pos_anchors3d[sort_rank]
+
                 with torch.no_grad(): #Why put here?
                     num_points_in_anchors = \
                             [(points_in_boxes_gpu(points[:,1:4].unsqueeze(0), pos_anchor3d.reshape(1,1,7))>=0).sum().item()
@@ -207,21 +219,22 @@ class Weakly2D3DTargetAssigner(object):
                         continue
                     topk_num, topk_idx = torch.topk(torch.tensor(num_points_in_anchors), topk)
                     # set xxx as zero
-                pos_idx = index[pos_anchors_mask][sort_rank][topk_idx]
+                pos_idx = index[pos_anchors_mask][sort_rank][:topk]   #[topk_idx] IoU is the only basis for ranking 
                 gt_ids[pos_anchors_mask] = -1
                 gt_ids[pos_idx] = gt_idx
-                #labels[pos_anchors_mask] = -1
+                labels[pos_anchors_mask] = -1
                 labels[pos_idx] = gt_classes[gt_idx]
 
+            labels[bg_inds] = 0
             # do the topk filtering
         else:
             bg_inds = torch.arange(num_anchors, device=anchors.device)
         
         bbox2d_targets = anchors.new_zeros((num_anchors, 4))
         if len(gt_boxes) > 0 and anchors.shape[0] > 0:
-            bbox2d_targets = gt_boxes[gt_ids.long(), :]
+            bbox2d_targets = gt_boxes2d[gt_ids.long(), :]
 #             bbox2d_targets[fg_inds, :] = self.box_coder.encode_torch(fg_gt_boxes2d, fg_anchors)
-        
+
         reg_weights = anchors.new_zeros((num_anchors,))
 
 #         if self.norm_by_num_examples:
@@ -229,9 +242,11 @@ class Weakly2D3DTargetAssigner(object):
 #             num_examples = num_examples if num_examples > 1.0 else 1.0
 #             reg_weights[labels > 0] = 1.0 / num_examples
 #         else:
-        #reg_weights[labels > 0] = 1.0 # TODO Change the way this is defined to align with the topk anchors
-        reg_weights[gt_ids != -1] = 1.0
-        #import pdb; pdb.set_trace() 
+
+        reg_weights[labels > 0] = 1.0 # TODO Change the way this is defined to align with the topk anchors
+        #reg_weights[gt_ids != -1] = 1.0
+
+        #import pdb; pdb.set_trace()
         ret_dict = {
             'box_cls_labels': labels,
             'box2d_reg_targets': bbox2d_targets,
@@ -254,7 +269,6 @@ class Weakly2D3DTargetAssigner(object):
 
     def generate_anchors2d(self, anchors, trans_lidar_to_cam, trans_cam_to_img, image_shape):
         anchors = torch.stack(anchors, dim=0)
-        #import pdb; pdb.set_trace()
         N, X, Y, Z, level, anchor_type, code_size = anchors.shape 
         anchors = anchors.reshape(-1, code_size)
         

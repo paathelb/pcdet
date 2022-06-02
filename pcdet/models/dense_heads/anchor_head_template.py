@@ -73,7 +73,7 @@ class AnchorHeadTemplate(nn.Module):
             target_assigner = Weakly2D3DTargetAssigner(
                 model_cfg=self.model_cfg,
                 class_names=self.class_names,
-                topk=20,
+                topk=30,
                 rank_by_num_points=True,
                 points_inside_2dbox_only=False,)
         else:
