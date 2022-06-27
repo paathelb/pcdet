@@ -68,12 +68,12 @@ class AnchorHeadTemplate(nn.Module):
                 box_coder=self.box_coder,
                 match_height=anchor_target_cfg.MATCH_HEIGHT
             )
-        # TODO modify the hyper parameter
+        # TODO modify the hyper parameter and include in the config file
         elif anchor_target_cfg.NAME == "Weakly2D3DTargetAssigner":
             target_assigner = Weakly2D3DTargetAssigner(
                 model_cfg=self.model_cfg,
                 class_names=self.class_names,
-                topk=30,
+                topk=5,
                 rank_by_num_points=True,
                 points_inside_2dbox_only=False,)
         else:

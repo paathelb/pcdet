@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
+import pcdet.models.dense_heads.target_assigner.kitti_utils_official as kitti_utils_official
 
 from ....ops.iou3d_nms import iou3d_nms_utils
 from ....utils import box_utils
@@ -64,7 +65,7 @@ class Weakly2D3DTargetAssigner(object):
             cur_gt = gt_boxes2d[idx]
             cur_gt_3d = gt_boxes3d[idx]
 
-            if True:
+            if False:
                 cnt = cur_gt_3d.__len__() - 1
                 while cnt > 0 and cur_gt_3d[cnt].sum() == 0:
                     cnt -= 1
@@ -87,13 +88,15 @@ class Weakly2D3DTargetAssigner(object):
             points_mask = points[:,0]==idx
             points_idx = points[points_mask]
             # Only consider points inside GT 2D Bounding Boxes
-
-            if self.points_inside_2dbox_only: #set to False; causes error to 2dbox without points inside
-                points_idx = self.select_only_points_inside_2dbbox(
+            
+            if self.points_inside_2dbox_only: # TODO Consider points that fall inside 2D box and at the same time 
+                                              # these points form cluster where their distances are within a threshold
+                points_idx = self.select_segmented_points(
                                                 points_idx, 
                                                 trans_lidar_to_cam[idx], 
                                                 trans_cam_to_img[idx],
-                                                cur_gt)
+                                                cur_gt,
+                                                image_shape[idx])
             
             for anchor_class_name, anchors, anchors3d in zip(self.anchor_class_names, all_anchors2d, all_anchors):
                 if cur_gt_classes.shape[0] > 1:
@@ -109,12 +112,11 @@ class Weakly2D3DTargetAssigner(object):
                     anchors = anchors.view(-1, anchors.shape[-1])
                     anchors3d = anchors3d.view(-1, anchors3d.shape[-1])
                     selected_classes = cur_gt_classes[mask]
-                
-                #import pdb; pdb.set_trace()
+
                 single_target = self.assign_targets_single(
                     anchors,
                     anchors3d,
-                    cur_gt_3d[mask],
+                    cur_gt[mask],
                     gt_classes=selected_classes,
                     matched_threshold=self.matched_thresholds[anchor_class_name],
                     unmatched_threshold=self.unmatched_thresholds[anchor_class_name],
@@ -171,11 +173,11 @@ class Weakly2D3DTargetAssigner(object):
         num_gt = gt_boxes.shape[0]
 
         labels = torch.ones((num_anchors,), dtype=torch.int32, device=anchors.device) * -1
-        gt_ids = torch.ones((num_anchors,), dtype=torch.int32, device=anchors.device) * -1 # IDs of GT boxes that has huge IoU to the anchor
+        gt_ids = torch.ones((num_anchors,), dtype=torch.int32, device=anchors.device) * -1 # IDs of GT boxes that have huge IoU to the anchor
 
         if len(gt_boxes) > 0 and anchors.shape[0] > 0:
-            #anchor_by_gt_overlap = boxes_iou_normal(anchors[:, 0:4], gt_boxes[:, 0:4]) #Intersection of the 2D anchors and the 2D ground truth boxes
-            anchor_by_gt_overlap = boxes3d_nearest_bev_iou(anchors3d[:, 0:7], gt_boxes[:, 0:7])
+            anchor_by_gt_overlap = boxes_iou_normal(anchors[:, 0:4], gt_boxes[:, 0:4]) #Intersection of the 2D anchors and the 2D ground truth boxes
+            #anchor_by_gt_overlap = boxes3d_nearest_bev_iou(anchors3d[:, 0:7], gt_boxes[:, 0:7])
 
             anchor_to_gt_argmax = torch.from_numpy(anchor_by_gt_overlap.cpu().detach().numpy().argmax(axis=1)).cuda()
             anchor_to_gt_max = anchor_by_gt_overlap[torch.arange(num_anchors, device=anchors.device), anchor_to_gt_argmax]
@@ -185,8 +187,8 @@ class Weakly2D3DTargetAssigner(object):
             empty_gt_mask = gt_to_anchor_max == 0
             gt_to_anchor_max[empty_gt_mask] = -1
 
-            anchors_with_max_overlap = (anchor_by_gt_overlap == gt_to_anchor_max).nonzero()[:, 0] #what anchors have the max overlap to each of the gt boxes
-            gt_inds_force = anchor_to_gt_argmax[anchors_with_max_overlap] #what gt indices correspond to these anchors with max overlap
+            anchors_with_max_overlap = (anchor_by_gt_overlap == gt_to_anchor_max).nonzero()[:, 0] # What anchors have the max overlap to each of the gt boxes
+            gt_inds_force = anchor_to_gt_argmax[anchors_with_max_overlap] # What gt indices correspond to these anchors with max overlap
             labels[anchors_with_max_overlap] = gt_classes[gt_inds_force]
             gt_ids[anchors_with_max_overlap] = gt_inds_force.int()
 
@@ -196,30 +198,37 @@ class Weakly2D3DTargetAssigner(object):
             gt_ids[pos_inds] = gt_inds_over_thresh.int()
             bg_inds = (anchor_to_gt_max < unmatched_threshold).nonzero()[:, 0]
             
-
             index = torch.arange(num_anchors)
-            for gt_idx in range(num_gt): # sort anchors per ground truth box
+            for gt_idx in range(num_gt): # sort anchors per ground truth box # TODO consider only points corresponding to the 2D GT box, not the total filtered points for all GT box
                 pos_anchors_mask =  gt_ids == gt_idx
 
                 pos_anchors_iou = anchor_by_gt_overlap[pos_anchors_mask, gt_idx]
 
                 pos_anchors3d = anchors3d[pos_anchors_mask]
-                sort_pos_anchors_iou, sort_rank = pos_anchors_iou.sort(descending=True)
+
+                _, sort_rank = pos_anchors_iou.sort(descending=True)
 
                 pos_anchors3d = pos_anchors3d[sort_rank]
 
-                with torch.no_grad(): #Why put here?
-                    num_points_in_anchors = \
-                            [(points_in_boxes_gpu(points[:,1:4].unsqueeze(0), pos_anchor3d.reshape(1,1,7))>=0).sum().item()
-                                                 for pos_anchor3d in pos_anchors3d]
-                    # the top k only consider number of points # ignore anchor size since all of anchors have the same size
-                    # TODO modify to density 
-                    topk = min(len(num_points_in_anchors), self.topk)
+                with torch.no_grad(): # Why put here?
+                    if len(points) > 0:
+                        num_points_in_anchors = \
+                                [(points_in_boxes_gpu(points[:,1:4].unsqueeze(0), pos_anchor3d.reshape(1,1,7))>=0).sum().item()
+                                                    for pos_anchor3d in pos_anchors3d]
+                        topk = min(len(num_points_in_anchors), self.topk)
+                        # The top k only consider number of points 
+                        # Ignore anchor size since all of anchors have the same size
+                        # TODO consider density 
+                    else:
+                        topk == 0
+
                     if topk == 0:
                         continue
-                    topk_num, topk_idx = torch.topk(torch.tensor(num_points_in_anchors), topk)
-                    # set xxx as zero
-                pos_idx = index[pos_anchors_mask][sort_rank][:topk]   #[topk_idx] IoU is the only basis for ranking 
+
+                    _, topk_idx = torch.topk(torch.tensor(num_points_in_anchors), topk) # NOTE In the case of multiple same num_points, selection seems random.
+                    # It doesn't choose index with higher IOU. 
+
+                pos_idx = index[pos_anchors_mask][sort_rank][topk_idx] #remove [topk_idx] and put [:topk] if 2D IoU is the only basis for ranking 
                 gt_ids[pos_anchors_mask] = -1
                 gt_ids[pos_idx] = gt_idx
                 labels[pos_anchors_mask] = -1
@@ -231,8 +240,10 @@ class Weakly2D3DTargetAssigner(object):
             bg_inds = torch.arange(num_anchors, device=anchors.device)
         
         bbox2d_targets = anchors.new_zeros((num_anchors, 4))
+
         if len(gt_boxes) > 0 and anchors.shape[0] > 0:
-            bbox2d_targets = gt_boxes2d[gt_ids.long(), :]
+            #bbox2d_targets = gt_boxes2d[gt_ids.long(), :]
+            bbox2d_targets = gt_boxes[gt_ids.long(), :]
 #             bbox2d_targets[fg_inds, :] = self.box_coder.encode_torch(fg_gt_boxes2d, fg_anchors)
 
         reg_weights = anchors.new_zeros((num_anchors,))
@@ -243,10 +254,8 @@ class Weakly2D3DTargetAssigner(object):
 #             reg_weights[labels > 0] = 1.0 / num_examples
 #         else:
 
-        reg_weights[labels > 0] = 1.0 # TODO Change the way this is defined to align with the topk anchors
-        #reg_weights[gt_ids != -1] = 1.0
+        reg_weights[labels > 0] = 1.0 
 
-        #import pdb; pdb.set_trace()
         ret_dict = {
             'box_cls_labels': labels,
             'box2d_reg_targets': bbox2d_targets,
@@ -298,24 +307,109 @@ class Weakly2D3DTargetAssigner(object):
         return anchors_2d
 
 
-    def select_only_points_inside_2dbbox(self, points, tran_lidar_to_cam, tran_cam_to_img, gt_2d):
+    def select_segmented_points(self, points, tran_lidar_to_cam, tran_cam_to_img, gt_2d, image_shape=None):
 
-        points3d = torch.matmul(points[:, 1:5], tran_lidar_to_cam.T)
-        points2d = torch.matmul(points3d, tran_cam_to_img.T)
+        # points3d = torch.matmul(points[:, 1:5], tran_lidar_to_cam.T)
+        # points2d = torch.matmul(points3d, tran_cam_to_img.T)
 
-        depth = points2d[..., 2:3]
-        points2d = points2d[..., :2] / depth    
+        # depth = points2d[..., 2:3]
+        # points2d = points2d[..., :2] / depth    
 
-
-        # Remove points outside ground truth bounding boxes
-        final = points.new_zeros((points2d.shape[0],), dtype=bool)
-        for box in gt_2d:
-            inds = points2d[:, 0] > box[0]
-            inds = torch.logical_and(inds, points2d[:, 0] < box[2])
-            inds = torch.logical_and(inds, points2d[:, 1] > box[1])
-            inds = torch.logical_and(inds, points2d[:, 1] < box[3])
-            inds = torch.logical_and(inds, depth.reshape(-1) > 0)
-            final = torch.logical_or(inds, final)
+        # # Remove points outside ground truth bounding boxes
+        # final = points.new_zeros((points2d.shape[0],), dtype=bool)
+        # for box in gt_2d:
+        #     inds = points2d[:, 0] >= box[0]
+        #     inds = torch.logical_and(inds, points2d[:, 0] < box[2])
+        #     inds = torch.logical_and(indsj, points2d[:, 1] > box[1])
+        #     inds = torch.logical_and(inds, points2d[:, 1] < box[3])
+        #     inds = torch.logical_and(inds, depth.reshape(-1j) >= 0)
+        #     final = torch.logical_or(inds, final)
         
         # final = torch.from_numpy(final)
-        return points[final]
+        
+        pc_all, object_filter_all = kitti_utils_official.get_point_cloud_weakly_version(points, tran_lidar_to_cam, tran_cam_to_img, image_shape, back_cut=False)
+        mask_ground_all, ground_sample_points = kitti_utils_official.calculate_ground_weakly(pc_all, tran_lidar_to_cam, tran_cam_to_img, image_shape, 0.2, back_cut=False)
+        
+        z_list = [] # list of medians of depth of points inside 2D bbox
+        index_list = [] # list of all objects indices
+        valid_list = [] # list of valid objects. If pc in 3D box is >= 30, then it is valid.
+
+        total_object_number = 0
+        for i in range(len(gt_2d)):
+            total_object_number += 1
+            flag = 1
+
+            _, object_filter = kitti_utils_official.get_point_cloud_weakly_version(points, tran_lidar_to_cam, tran_cam_to_img, image_shape, [gt_2d[i]], back_cut=False)
+            pc = pc_all[object_filter == 1]
+            
+            valid_list.append(i)
+            z_list.append(torch.median(pc[:, 2]))
+            index_list.append(i)
+
+        sort = torch.argsort(torch.tensor(z_list))
+        object_list = list(torch.tensor(index_list)[sort])
+
+        mask_object = torch.ones((pc_all.shape[0])).float().to(pc_all.device)
+        mask_seg_best_final = torch.zeros((pc_all.shape[0])).float().to(pc_all.device)
+        thresh_seg_max = 7
+
+        for i in object_list:
+            result = torch.zeros((7, 2)).float().to(pc_all.device)
+            count = 0
+            mask_seg_list = []
+            
+            for j in range(thresh_seg_max):
+                thresh = (j + 1) * 0.1
+                _, object_filter = kitti_utils_official.get_point_cloud_weakly_version(
+                                   points, tran_lidar_to_cam, tran_cam_to_img, image_shape, [gt_2d[i]], back_cut=False)
+                
+                filter_z = pc_all[:, 2] > 0
+                mask_search = mask_ground_all* object_filter_all * mask_object * filter_z
+                mask_origin = mask_ground_all * object_filter * mask_object * filter_z
+                
+                mask_seg = kitti_utils_official.region_grow_weakly_version(pc_all.detach().clone(), 
+                                                                    mask_search, mask_origin, thresh, ratio=0.90)
+                if mask_seg.sum() == 0:
+                    continue
+
+                if j >= 1:
+                    mask_seg_old = mask_seg_list[-1] 
+                    if mask_seg_old.sum() != (mask_seg * mask_seg_old).sum():
+                        count += 1
+                result[count, 0] = j  
+                result[count, 1] = mask_seg.sum()
+                mask_seg_list.append(mask_seg)
+
+            best_j = result[torch.argmax(result[:, 1]), 0].item()
+
+            try:
+                mask_seg_best = mask_seg_list[int(best_j)]
+                mask_object *= (1 - mask_seg_best)
+                pc = pc_all[mask_seg_best == 1].detach().clone()
+
+            except IndexError:
+                # print("bad region grow result! deprecated")
+                continue
+
+            if i not in valid_list: # Why do we have access to the valid list?
+                continue
+            
+            if kitti_utils_official.check_truncate(image_shape, gt_2d[i]): # different with objects[i].boxes[0].box?
+                # print('object %d truncates in %s, with bbox %s' % (i, seq, str(objects[i].boxes_origin[0].box)))
+
+                mask_origin_new = mask_seg_best
+                mask_search_new = mask_ground_all
+                thresh_new      = (best_j + 1) * 0.1
+
+                mask_seg_for_truncate = kitti_utils_official.region_grow_weakly_version(pc_all.detach().clone(),
+                                                                                    mask_search_new,
+                                                                                    mask_origin_new,
+                                                                                    thresh_new,
+                                                                                    ratio=None)
+                pc_truncate = pc_all[mask_seg_for_truncate == 1].detach().clone()
+                mask_seg_best_final = torch.logical_or(mask_seg_best_final, mask_seg_for_truncate)
+
+            else:
+                mask_seg_best_final = torch.logical_or(mask_seg_best_final, mask_seg_best)
+
+        return points[mask_seg_best_final]

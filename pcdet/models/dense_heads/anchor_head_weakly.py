@@ -64,17 +64,16 @@ class AnchorHeadWeakly(AnchorHeadSingle):
         # convert to cuda
         lidar2cam = torch.stack(lidar2cam, dim=0).to(pred_boxes3d.device)
         cam2img = torch.stack(cam2img, dim=0).to(pred_boxes3d.device)
-        pred_bboxes_camera = torch.stack([boxes3d_lidar_to_kitti_camera_nocopy(
-                                pred_boxes3d[idx], lidar2cam[idx]) for idx in range(batch_size)], dim=0)
-        # P2 = [torch.tensor(calib[idx].P2) for idx in range(batch_size)]
-        # P2 = torch.stack(P2, dim=0).to(pred_boxes3d.device)
-
         # convert to camera
+        pred_bboxes_camera = torch.stack([boxes3d_lidar_to_kitti_camera_nocopy(pred_boxes3d[idx], lidar2cam[idx])
+                             for idx in range(batch_size)], dim=0)
+
+        # Encode 2D box from 3D box
         cam2img = cam2img.unsqueeze(1).expand(-1, pred_boxes3d.shape[1], -1, -1)
         rotys = pred_bboxes_camera[:,:,-1].reshape(-1)
         dims =  pred_bboxes_camera[:,:,3:6].reshape(-1,3)
         locs = pred_bboxes_camera[:,:,:3].reshape(-1,3)
-        img_size = torch.max(self.forward_ret_dict['image_shape'], dim=0)[0] #Why use the max here?
+        img_size = torch.max(self.forward_ret_dict['image_shape'], dim=0)[0] # Why use the max here?
         pred_boxes2d = GeoTransTorch.encode_box2d(
                     rotys, dims, locs, cam2img.reshape(-1,3,4), img_size=torch.flip(img_size, dims=[0]))
 
@@ -114,7 +113,7 @@ class AnchorHeadWeakly(AnchorHeadSingle):
 
     def forward(self, data_dict):
         spatial_features_2d = data_dict['spatial_features_2d']
-
+        # Use the spatial_features_2d for both classification and box regression
         cls_preds = self.conv_cls(spatial_features_2d)
         box_preds = self.conv_box(spatial_features_2d)
 
@@ -130,6 +129,7 @@ class AnchorHeadWeakly(AnchorHeadSingle):
             self.forward_ret_dict['dir_cls_preds'] = dir_cls_preds
         else:
             dir_cls_preds = None
+        #import pdb; pdb.set_trace() 
         if self.training:
             if "gt_boxes2d" not in data_dict:
                 targets_dict = self.assign_targets(
@@ -159,7 +159,7 @@ class AnchorHeadWeakly(AnchorHeadSingle):
             self.forward_ret_dict['gt_boxes2d'] = data_dict['gt_boxes2d']
             self.forward_ret_dict['image_shape'] = data_dict['image_shape']
 
-            #Why store this?
+            # Why store this?
             batch_cls_preds, batch_box_preds = self.generate_predicted_boxes(
                 batch_size=data_dict['batch_size'],
                 cls_preds=cls_preds, box_preds=box_preds, dir_cls_preds=dir_cls_preds

@@ -58,7 +58,7 @@ def parse_config():
 
 def main():
     args, cfg = parse_config()
-    #import pdb; pdb.set_trace() 
+
     if args.launcher == 'none':
         dist_train = False
         total_gpus = 1
@@ -103,6 +103,7 @@ def main():
     tb_log = SummaryWriter(log_dir=str(output_dir / 'tensorboard')) if cfg.LOCAL_RANK == 0 else None
 
     # -----------------------create dataloader & network & optimizer---------------------------
+    
     train_set, train_loader, train_sampler = build_dataloader(
         dataset_cfg=cfg.DATA_CONFIG,
         class_names=cfg.CLASS_NAMES,

@@ -23,6 +23,7 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
         end = time.time()
         try:
             batch = next(dataloader_iter)
+            
         except StopIteration:
             dataloader_iter = iter(train_loader)
             batch = next(dataloader_iter)

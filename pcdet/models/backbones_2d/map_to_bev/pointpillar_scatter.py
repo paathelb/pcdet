@@ -24,7 +24,7 @@ class PointPillarScatter(nn.Module):
 
             batch_mask = coords[:, 0] == batch_idx
             this_coords = coords[batch_mask, :]
-            indices = this_coords[:, 1] + this_coords[:, 2] * self.nx + this_coords[:, 3]
+            indices = this_coords[:, 1] + this_coords[:, 2] * self.nx + this_coords[:, 3] # TODO know intuition
             indices = indices.type(torch.long)
             pillars = pillar_features[batch_mask, :]
             pillars = pillars.t()
