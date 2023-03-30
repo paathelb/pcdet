@@ -6,10 +6,12 @@ from ...utils import box_coder_utils, common_utils, loss_utils
 from .target_assigner.anchor_generator import AnchorGenerator
 from .target_assigner.atss_target_assigner import ATSSTargetAssigner
 from .target_assigner.axis_aligned_target_assigner import AxisAlignedTargetAssigner
-
+from .target_assigner.weakly2d_3d_target_assigner import Weakly2D3DTargetAssigner
 
 class AnchorHeadTemplate(nn.Module):
-    def __init__(self, model_cfg, num_class, class_names, grid_size, point_cloud_range, predict_boxes_when_training):
+    def __init__(self, model_cfg, num_class,
+                       class_names, grid_size, 
+                       point_cloud_range, predict_boxes_when_training):
         super().__init__()
         self.model_cfg = model_cfg
         self.num_class = num_class
@@ -29,7 +31,6 @@ class AnchorHeadTemplate(nn.Module):
             anchor_ndim=self.box_coder.code_size
         )
         self.anchors = [x.cuda() for x in anchors]
-     
         self.target_assigner = self.get_target_assigner(anchor_target_cfg)
 
         self.forward_ret_dict = {}
@@ -67,6 +68,14 @@ class AnchorHeadTemplate(nn.Module):
                 box_coder=self.box_coder,
                 match_height=anchor_target_cfg.MATCH_HEIGHT
             )
+        # TODO modify the hyper parameter and include in the config file
+        elif anchor_target_cfg.NAME == "Weakly2D3DTargetAssigner":
+            target_assigner = Weakly2D3DTargetAssigner(
+                model_cfg=self.model_cfg,
+                class_names=self.class_names,
+                topk=5,
+                rank_by_num_points=True,
+                use_segmented_points=True,)
         else:
             raise NotImplementedError
         return target_assigner
@@ -87,46 +96,48 @@ class AnchorHeadTemplate(nn.Module):
             loss_utils.WeightedCrossEntropyLoss()
         )
 
-    def assign_targets(self, gt_boxes):
+    def assign_targets(self, gt_boxes, gt_boxes2d=None, **kwargs):
         """
         Args:
             gt_boxes: (B, M, 8)
         Returns:
-
         """
+        # if gt_boxes
         targets_dict = self.target_assigner.assign_targets(
-            self.anchors, gt_boxes
+            self.anchors, gt_boxes, gt_boxes2d,
+            **kwargs,
         )
         return targets_dict
 
+
     def get_cls_layer_loss(self):
-        cls_preds = self.forward_ret_dict['cls_preds']
-        box_cls_labels = self.forward_ret_dict['box_cls_labels']
+        cls_preds = self.forward_ret_dict['cls_preds']                  # B x Y x Z x 2
+        box_cls_labels = self.forward_ret_dict['box_cls_labels']        # B x num_anchors
         batch_size = int(cls_preds.shape[0])
-        cared = box_cls_labels >= 0  # [N, num_anchors]
-        positives = box_cls_labels > 0
-        negatives = box_cls_labels == 0
-        negative_cls_weights = negatives * 1.0
-        cls_weights = (negative_cls_weights + 1.0 * positives).float()
-        reg_weights = positives.float()
+        cared = box_cls_labels >= 0                                     # B x num_anchors
+        positives = box_cls_labels > 0                                  # B x num_anchors
+        negatives = box_cls_labels == 0                                 # B x num_anchors
+        negative_cls_weights = negatives * 1.0                          # B x num_anchors
+        cls_weights = (negative_cls_weights + 1.0 * positives).float()  # B x num_anchors
+        reg_weights = positives.float()                                 # B x num_anchors
         if self.num_class == 1:
             # class agnostic
-            box_cls_labels[positives] = 1
+            box_cls_labels[positives] = 1                               # B x num_anchors
 
-        pos_normalizer = positives.sum(1, keepdim=True).float()
-        reg_weights /= torch.clamp(pos_normalizer, min=1.0)
-        cls_weights /= torch.clamp(pos_normalizer, min=1.0)
-        cls_targets = box_cls_labels * cared.type_as(box_cls_labels)
-        cls_targets = cls_targets.unsqueeze(dim=-1)
+        pos_normalizer = positives.sum(1, keepdim=True).float()         # B x 1
+        reg_weights /= torch.clamp(pos_normalizer, min=1.0)             # B x num_anchors
+        cls_weights /= torch.clamp(pos_normalizer, min=1.0)             # B x num_anchors
+        cls_targets = box_cls_labels * cared.type_as(box_cls_labels)    # B x num_anchors # Just equal to positives if there is one class
+        cls_targets = cls_targets.unsqueeze(dim=-1)                     # B x num_anchors x 1
 
-        cls_targets = cls_targets.squeeze(dim=-1)
-        one_hot_targets = torch.zeros(
+        cls_targets = cls_targets.squeeze(dim=-1)                       # B x num_anchors
+        one_hot_targets = torch.zeros(                                  # B x num_anchors x 2
             *list(cls_targets.shape), self.num_class + 1, dtype=cls_preds.dtype, device=cls_targets.device
-        )
-        one_hot_targets.scatter_(-1, cls_targets.unsqueeze(dim=-1).long(), 1.0)
-        cls_preds = cls_preds.view(batch_size, -1, self.num_class)
-        one_hot_targets = one_hot_targets[..., 1:]
-        cls_loss_src = self.cls_loss_func(cls_preds, one_hot_targets, weights=cls_weights)  # [N, M]
+        )                                                               
+        one_hot_targets.scatter_(-1, cls_targets.unsqueeze(dim=-1).long(), 1.0)     # B x num_anchors x 2
+        cls_preds = cls_preds.view(batch_size, -1, self.num_class)                  # B x num_anchors x 1
+        one_hot_targets = one_hot_targets[..., 1:]                                  # B x num_anchors x 1
+        cls_loss_src = self.cls_loss_func(cls_preds, one_hot_targets, weights=cls_weights)  # [N, M] # Sigmoid Focal Classification Loss # TODO Why use cls_weights?
         cls_loss = cls_loss_src.sum() / batch_size
 
         cls_loss = cls_loss * self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['cls_weight']

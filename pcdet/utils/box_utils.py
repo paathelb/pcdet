@@ -185,19 +185,19 @@ def boxes3d_lidar_to_kitti_camera_nocopy(boxes3d_lidar, lidar2cam):
     :return:
         boxes3d_camera: (N, 7) [x, y, z, l, h, w, r] in rect camera coords
     """
-    boxes3d_lidar_copy = boxes3d_lidar.clone()
-    xyz_lidar = boxes3d_lidar_copy[:, 0:3]
-    l, w, h = boxes3d_lidar_copy[:, 3:4], boxes3d_lidar_copy[:, 4:5], boxes3d_lidar_copy[:, 5:6]
-    r = boxes3d_lidar_copy[:, 6:7]
+    boxes3d_lidar_copy = boxes3d_lidar.clone()      # N x 7
+    xyz_lidar = boxes3d_lidar_copy[:, 0:3]          # N x 3
+    l, w, h = boxes3d_lidar_copy[:, 3:4], boxes3d_lidar_copy[:, 4:5], boxes3d_lidar_copy[:, 5:6]    # N x 1, N x 1, N x 1
+    r = boxes3d_lidar_copy[:, 6:7]      # N x 1
 
-    xyz_lidar[:, 2] -= h.reshape(-1) / 2
+    xyz_lidar[:, 2] -= h.reshape(-1) / 2        # N x 3 # TODO Intuition? 
 
-    xyz_cam = torch.cat([xyz_lidar, torch.ones( [xyz_lidar.shape[0], 1], device=xyz_lidar.device)], dim=1)
-    xyz_cam = torch.matmul(xyz_cam, lidar2cam.T)
+    xyz_cam = torch.cat([xyz_lidar, torch.ones([xyz_lidar.shape[0], 1], device=xyz_lidar.device)], dim=1) # N x 4
+    xyz_cam = torch.matmul(xyz_cam, lidar2cam.T)        # N x 4 # Why transpose?
     # xyz_cam = calib.lidar_to_rect(xyz_lidar)
     # xyz_cam[:, 1] += h.reshape(-1) / 2
-    r = -r - np.pi / 2
-    return torch.cat([xyz_cam[..., :3], l, h, w, r], dim=1)
+    r = -r - np.pi / 2  # N x 1 # TODO Intuition?
+    return torch.cat([xyz_cam[..., :3], l, h, w, r], dim=1) # N x 7
 
 
 def boxes3d_to_corners3d_kitti_camera(boxes3d, bottom_center=True):

@@ -252,22 +252,22 @@ def quaternion_yaw(q: Quaternion) -> float:
 def fill_trainval_infos(data_path, nusc, train_scenes, val_scenes, test=False, max_sweeps=10):
     train_nusc_infos = []
     val_nusc_infos = []
-    progress_bar = tqdm.tqdm(total=len(nusc.sample), desc='create_info', dynamic_ncols=True)
+    progress_bar = tqdm.tqdm(total=len(nusc.sample), desc='create_info', dynamic_ncols=True)        # len(nusc.sample)=34149
 
     ref_chan = 'LIDAR_TOP'  # The radar channel from which we track back n sweeps to aggregate the point cloud.
-    chan = 'LIDAR_TOP'  # The reference channel of the current sample_rec that the point clouds are mapped to.
+    chan = 'LIDAR_TOP'      # The reference channel of the current sample_rec that the point clouds are mapped to.
 
     for index, sample in enumerate(nusc.sample):
         progress_bar.update()
 
-        ref_sd_token = sample['data'][ref_chan]
-        ref_sd_rec = nusc.get('sample_data', ref_sd_token)
-        ref_cs_rec = nusc.get('calibrated_sensor', ref_sd_rec['calibrated_sensor_token'])
-        ref_pose_rec = nusc.get('ego_pose', ref_sd_rec['ego_pose_token'])
+        ref_sd_token = sample['data'][ref_chan]                 # sample['data'] keys are RADAR_FRONT, RADAR_FRONT_LEFT, RADAR_FRONT_RIGHT,...
+        ref_sd_rec = nusc.get('sample_data', ref_sd_token)      # dict with calibrated_sensor_token & ego_pose_token & timestamp
+        ref_cs_rec = nusc.get('calibrated_sensor', ref_sd_rec['calibrated_sensor_token'])   # dict with translation and rotation
+        ref_pose_rec = nusc.get('ego_pose', ref_sd_rec['ego_pose_token'])                   # dict with rotation and translation
         ref_time = 1e-6 * ref_sd_rec['timestamp']
-
+        
         ref_lidar_path, ref_boxes, _ = get_sample_data(nusc, ref_sd_token)
-
+        
         ref_cam_front_token = sample['data']['CAM_FRONT']
         ref_cam_path, _, ref_cam_intrinsic = nusc.get_sample_data(ref_cam_front_token)
 
@@ -308,7 +308,7 @@ def fill_trainval_infos(data_path, nusc, train_scenes, val_scenes, test=False, m
                 else:
                     sweeps.append(sweeps[-1])
             else:
-                curr_sd_rec = nusc.get('sample_data', curr_sd_rec['prev'])
+                curr_sd_rec = nusc.get('sample_data', curr_sd_rec['prev'])          # TODO Why prev?
 
                 # Get past pose
                 current_pose_rec = nusc.get('ego_pose', curr_sd_rec['ego_pose_token'])

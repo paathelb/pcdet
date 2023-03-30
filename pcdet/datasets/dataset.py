@@ -120,7 +120,7 @@ class DatasetTemplate(torch_data.Dataset):
                 voxel_num_points: optional (num_voxels)
                 ...
         """
-        #simport pdb; pdb.set_trace() 
+        
         if self.training:
             assert 'gt_boxes' in data_dict, 'gt_boxes should be provided for training'
             gt_boxes_mask = np.array([n in self.class_names for n in data_dict['gt_names']], dtype=np.bool_)
@@ -139,7 +139,7 @@ class DatasetTemplate(torch_data.Dataset):
             gt_classes = np.array([self.class_names.index(n) + 1 for n in data_dict['gt_names']], dtype=np.int32)
             gt_boxes = np.concatenate((data_dict['gt_boxes'], gt_classes.reshape(-1, 1).astype(np.float32)), axis=1)
             data_dict['gt_boxes'] = gt_boxes
-
+            
             if data_dict.get('gt_boxes2d', None) is not None:
                 data_dict['gt_boxes2d'] = data_dict['gt_boxes2d'][selected]
 
@@ -151,7 +151,7 @@ class DatasetTemplate(torch_data.Dataset):
         )
 
         if self.training and len(data_dict['gt_boxes']) == 0:
-            new_index = np.random.randint(self.__len__())
+            new_index = np.random.randint(self.__len__()) 
             return self.__getitem__(new_index)
 
         data_dict.pop('gt_names', None)
@@ -166,7 +166,7 @@ class DatasetTemplate(torch_data.Dataset):
                 data_dict[key].append(val)
         batch_size = len(batch_list)
         ret = {}
-
+        
         for key, val in data_dict.items():
             try:
                 if key in ['voxels', 'voxel_num_points']:
@@ -191,6 +191,24 @@ class DatasetTemplate(torch_data.Dataset):
                         if val[k].size > 0:
                             batch_boxes2d[k, :val[k].__len__(), :] = val[k]
                     ret[key] = batch_boxes2d
+                # Changes made by Helbert 
+                elif key in ['segpts']:
+                    max_points = 0
+                    max_points = max([len(x) for x in val])
+                    batch_segpts = np.zeros((batch_size, max_points, val[0].shape[-1]), dtype=np.float32)
+                    for k in range(batch_size):
+                        if val[k].size > 0:
+                            batch_segpts[k, :val[k].__len__(), :] = val[k]
+                    ret[key] = batch_segpts
+                elif key in ['loss_weights']:
+                    max_weights = 0
+                    max_weights = max([len(x) for x in val])
+                    batch_loss_weights = np.zeros((batch_size, max_weights, val[0].shape[-1]), dtype=np.float32)
+                    for k in range(batch_size):
+                        if val[k].size > 0:
+                            batch_loss_weights[k, :val[k].__len__(), :] = val[k]
+                    ret[key] = batch_loss_weights
+
                 elif key in ["images", "depth_maps"]:
                     # Get largest image size (H, W)
                     max_h = 0

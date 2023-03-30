@@ -259,7 +259,7 @@ class Detector3DTemplate(nn.Module):
                     box_scores=cls_preds, box_preds=box_preds,
                     nms_config=post_process_cfg.NMS_CONFIG,
                     score_thresh=post_process_cfg.SCORE_THRESH
-                )
+                )   # selected are indices, say out of 128, of those selected
 
                 if post_process_cfg.OUTPUT_RAW_SCORE:
                     max_cls_preds, _ = torch.max(src_cls_preds, dim=-1)
@@ -276,7 +276,7 @@ class Detector3DTemplate(nn.Module):
             )
 
             record_dict = {
-                'pred_boxes': final_boxes,
+                'pred_boxes': final_boxes,      # Why different shape as the GT boxes?
                 'pred_scores': final_scores,
                 'pred_labels': final_labels
             }

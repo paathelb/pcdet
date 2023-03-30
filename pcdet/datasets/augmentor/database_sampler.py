@@ -217,6 +217,7 @@ class DataBaseSampler(object):
         gt_names = data_dict['gt_names'].astype(str)
         existed_boxes = gt_boxes
         total_valid_sampled_dict = []
+
         for class_name, sample_group in self.sample_groups.items():
             if self.limit_whole_scene:
                 num_gt = np.sum(class_name == gt_names)
@@ -239,6 +240,11 @@ class DataBaseSampler(object):
 
                 existed_boxes = np.concatenate((existed_boxes, valid_sampled_boxes), axis=0)
                 total_valid_sampled_dict.extend(valid_sampled_dict)
+
+                # Changes made by Helbert
+                weights_mean = data_dict['loss_weights'].mean()
+                try: data_dict['loss_weights'] = np.concatenate((data_dict['loss_weights'], np.array([weights_mean] * len(valid_mask))), axis = None)
+                except: print("Loss weights not loaded!")
 
         sampled_gt_boxes = existed_boxes[gt_boxes.shape[0]:, :]
         if total_valid_sampled_dict.__len__() > 0:

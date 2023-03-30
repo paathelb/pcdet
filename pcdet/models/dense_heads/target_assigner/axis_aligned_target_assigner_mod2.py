@@ -33,7 +33,7 @@ class AxisAlignedTargetAssigner(object):
         #         for idx, name in enumerate(rpn_head_cfg['HEAD_CLS_NAME']):
         #             self.gt_remapping[name] = idx + 1
 
-    def assign_targets(self, all_anchors, gt_boxes_with_classes):
+    def assign_targets(self, all_anchors, gt_boxes_with_classes, gt_boxes2d):
         """
         Args:
             all_anchors: [(N, 7), ...]

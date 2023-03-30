@@ -125,7 +125,7 @@ def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir
 
         if cfg.LOCAL_RANK == 0:
             for key, val in tb_dict.items():
-                tb_log.add_scalar(key, val, cur_epoch_id)
+                tb_log.add_scalar(key, val, cur_epoch_id) # TODO What it means to add_scalar?
 
         # record this epoch which has been evaluated
         with open(ckpt_record_file, 'a') as f:

@@ -639,11 +639,11 @@ def do_coco_style_eval(gt_annos, dt_annos, current_classes, overlap_ranges,
 def get_official_eval_result(gt_annos, dt_annos, current_classes, PR_detail_dict=None):
     overlap_0_7 = np.array([[0.7, 0.5, 0.5, 0.7,
                              0.5, 0.7], [0.7, 0.5, 0.5, 0.7, 0.5, 0.7],
-                            [0.7, 0.5, 0.5, 0.7, 0.5, 0.7]])
+                            [0.7, 0.5, 0.5, 0.7, 0.5, 0.7]]) # 3 x 6
     overlap_0_5 = np.array([[0.7, 0.5, 0.5, 0.7,
                              0.5, 0.5], [0.5, 0.25, 0.25, 0.5, 0.25, 0.5],
-                            [0.5, 0.25, 0.25, 0.5, 0.25, 0.5]])
-    min_overlaps = np.stack([overlap_0_7, overlap_0_5], axis=0)  # [2, 3, 5]
+                            [0.5, 0.25, 0.25, 0.5, 0.25, 0.5]]) # 3 x 6
+    min_overlaps = np.stack([overlap_0_7, overlap_0_5], axis=0)  # [2, 3, 6] # Interpretation
     class_to_name = {
         0: 'Car',
         1: 'Pedestrian',
@@ -662,10 +662,10 @@ def get_official_eval_result(gt_annos, dt_annos, current_classes, PR_detail_dict
         else:
             current_classes_int.append(curcls)
     current_classes = current_classes_int
-    min_overlaps = min_overlaps[:, :, current_classes]
+    min_overlaps = min_overlaps[:, :, current_classes] # 2 x 3 x CC where CC is the len of current_classes
     result = ''
     # check whether alpha is valid
-    compute_aos = False
+    compute_aos = False # TODO Intuition with this?
     for anno in dt_annos:
         if anno['alpha'].shape[0] != 0:
             if anno['alpha'][0] != -10:
@@ -673,15 +673,15 @@ def get_official_eval_result(gt_annos, dt_annos, current_classes, PR_detail_dict
             break
     mAPbbox, mAPbev, mAP3d, mAPaos, mAPbbox_R40, mAPbev_R40, mAP3d_R40, mAPaos_R40 = do_eval(
         gt_annos, dt_annos, current_classes, min_overlaps, compute_aos, PR_detail_dict=PR_detail_dict)
-
+    # CC x 3 x 2 shape for all # First column is for 0.70; second column is for 0.50
     ret_dict = {}
-    for j, curcls in enumerate(current_classes):
+    for j, curcls in enumerate(current_classes): # Iterating over the classes
         # mAP threshold array: [num_minoverlap, metric, class]
         # mAP result: [num_class, num_diff, num_minoverlap]
-        for i in range(min_overlaps.shape[0]):
+        for i in range(min_overlaps.shape[0]): # Iterating over 0.70 and 0.50
             result += print_str(
                 (f"{class_to_name[curcls]} "
-                 "AP@{:.2f}, {:.2f}, {:.2f}:".format(*min_overlaps[i, :, j])))
+                 "AP@{:.2f}, {:.2f}, {:.2f}:".format(*min_overlaps[i, :, j])))  # Title
             result += print_str((f"bbox AP:{mAPbbox[j, 0, i]:.4f}, "
                                  f"{mAPbbox[j, 1, i]:.4f}, "
                                  f"{mAPbbox[j, 2, i]:.4f}"))
@@ -703,7 +703,7 @@ def get_official_eval_result(gt_annos, dt_annos, current_classes, PR_detail_dict
 
             result += print_str(
                 (f"{class_to_name[curcls]} "
-                 "AP_R40@{:.2f}, {:.2f}, {:.2f}:".format(*min_overlaps[i, :, j])))
+                 "AP_R40@{:.2f}, {:.2f}, {:.2f}:".format(*min_overlaps[i, :, j]))) # Title
             result += print_str((f"bbox AP:{mAPbbox_R40[j, 0, i]:.4f}, "
                                  f"{mAPbbox_R40[j, 1, i]:.4f}, "
                                  f"{mAPbbox_R40[j, 2, i]:.4f}"))
@@ -717,7 +717,7 @@ def get_official_eval_result(gt_annos, dt_annos, current_classes, PR_detail_dict
                 result += print_str((f"aos  AP:{mAPaos_R40[j, 0, i]:.2f}, "
                                      f"{mAPaos_R40[j, 1, i]:.2f}, "
                                      f"{mAPaos_R40[j, 2, i]:.2f}"))
-                if i == 0:
+                if i == 0: # Save aos R40 values TODO Why save aos values of difficult?   
                    ret_dict['%s_aos/easy_R40' % class_to_name[curcls]] = mAPaos_R40[j, 0, 0]
                    ret_dict['%s_aos/moderate_R40' % class_to_name[curcls]] = mAPaos_R40[j, 1, 0]
                    ret_dict['%s_aos/hard_R40' % class_to_name[curcls]] = mAPaos_R40[j, 2, 0]

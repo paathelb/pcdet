@@ -196,6 +196,7 @@ class NuScenesDataset(DatasetTemplate):
         return annos
 
     def evaluation(self, det_annos, class_names, **kwargs):
+        import pdb; pdb.set_trace() 
         import json
         from nuscenes.nuscenes import NuScenes
         from . import nuscenes_utils
@@ -300,13 +301,14 @@ def create_nuscenes_info(version, data_path, save_path, max_sweeps=10):
     from nuscenes.nuscenes import NuScenes
     from nuscenes.utils import splits
     from . import nuscenes_utils
+    import pdb; pdb.set_trace() 
     data_path = data_path / version
     save_path = save_path / version
 
     assert version in ['v1.0-trainval', 'v1.0-test', 'v1.0-mini']
     if version == 'v1.0-trainval':
-        train_scenes = splits.train
-        val_scenes = splits.val
+        train_scenes = splits.train     # 700
+        val_scenes = splits.val     # 150
     elif version == 'v1.0-test':
         train_scenes = splits.test
         val_scenes = []
@@ -317,18 +319,18 @@ def create_nuscenes_info(version, data_path, save_path, max_sweeps=10):
         raise NotImplementedError
 
     nusc = NuScenes(version=version, dataroot=data_path, verbose=True)
-    available_scenes = nuscenes_utils.get_available_scenes(nusc)
-    available_scene_names = [s['name'] for s in available_scenes]
-    train_scenes = list(filter(lambda x: x in available_scene_names, train_scenes))
-    val_scenes = list(filter(lambda x: x in available_scene_names, val_scenes))
-    train_scenes = set([available_scenes[available_scene_names.index(s)]['token'] for s in train_scenes])
+    available_scenes = nuscenes_utils.get_available_scenes(nusc)        # 850
+    available_scene_names = [s['name'] for s in available_scenes]    # 850   
+    train_scenes = list(filter(lambda x: x in available_scene_names, train_scenes)) # 700
+    val_scenes = list(filter(lambda x: x in available_scene_names, val_scenes))     # 150
+    train_scenes = set([available_scenes[available_scene_names.index(s)]['token'] for s in train_scenes])   # What is the importance of token?
     val_scenes = set([available_scenes[available_scene_names.index(s)]['token'] for s in val_scenes])
 
     print('%s: train scene(%d), val scene(%d)' % (version, len(train_scenes), len(val_scenes)))
 
     train_nusc_infos, val_nusc_infos = nuscenes_utils.fill_trainval_infos(
         data_path=data_path, nusc=nusc, train_scenes=train_scenes, val_scenes=val_scenes,
-        test='test' in version, max_sweeps=max_sweeps
+        test='test' in version, max_sweeps=max_sweeps # What is max_sweeps?
     )
 
     if version == 'v1.0-test':

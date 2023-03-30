@@ -2,7 +2,7 @@ import numpy as np
 import torch.nn as nn
 
 from .anchor_head_template import AnchorHeadTemplate
-
+from .target_assigner.weakly2d_3d_target_assigner import Weakly2D3DTargetAssigner
 
 class AnchorHeadSingle(AnchorHeadTemplate):
     def __init__(self, model_cfg, input_channels, num_class, class_names, grid_size, point_cloud_range,
@@ -56,13 +56,42 @@ class AnchorHeadSingle(AnchorHeadTemplate):
             self.forward_ret_dict['dir_cls_preds'] = dir_cls_preds
         else:
             dir_cls_preds = None
-
         if self.training:
-            targets_dict = self.assign_targets(
-                gt_boxes=data_dict['gt_boxes']
-            )
+            if "gt_boxes2d" not in data_dict:
+                targets_dict = self.assign_targets(
+                    gt_boxes=data_dict['gt_boxes']
+                )
+            else:
+                # "gt_boxes2d"
+                # only support for axis aligned target assigner
+                if isinstance(self.target_assigner, Weakly2D3DTargetAssigner):
+                    targets_dict = self.assign_targets(
+                        gt_boxes=data_dict["gt_boxes"],
+                        gt_boxes2d=data_dict["gt_boxes2d"],
+                        trans_lidar_to_cam=data_dict["trans_lidar_to_cam"],
+                        trans_cam_to_img=data_dict["trans_cam_to_img"],
+                        points=data_dict["points"],
+                        image_shape=data_dict["image_shape"],
+                    )
+                else:
+                    targets_dict = self.assign_targets(
+                        gt_boxes=data_dict["gt_boxes"],
+                        gt_boxes2d=data_dict["gt_boxes2d"],
+                    )
             self.forward_ret_dict.update(targets_dict)
+            self.forward_ret_dict['trans_lidar_to_cam'] = data_dict['trans_lidar_to_cam']
+            self.forward_ret_dict['trans_cam_to_img'] = data_dict['trans_cam_to_img']
+            self.forward_ret_dict['gt_boxes'] = data_dict['gt_boxes']
+            self.forward_ret_dict['gt_boxes2d'] = data_dict['gt_boxes2d']
+            self.forward_ret_dict['image_shape'] = data_dict['image_shape']
 
+            batch_cls_preds, batch_box_preds = self.generate_predicted_boxes(
+                batch_size=data_dict['batch_size'],
+                cls_preds=cls_preds, box_preds=box_preds, dir_cls_preds=dir_cls_preds
+            )
+            self.forward_ret_dict['batch_cls_preds'] = batch_cls_preds
+            self.forward_ret_dict['batch_box_preds'] = batch_box_preds
+            self.forward_ret_dict['cls_preds_normalized'] = False
         if not self.training or self.predict_boxes_when_training:
             batch_cls_preds, batch_box_preds = self.generate_predicted_boxes(
                 batch_size=data_dict['batch_size'],

@@ -9,6 +9,7 @@ from ...ops.roiaware_pool3d import roiaware_pool3d_utils
 from ...utils import box_utils, calibration_kitti, common_utils, object3d_kitti
 from ..dataset import DatasetTemplate
 
+import torch
 
 class KittiDataset(DatasetTemplate):
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None):
@@ -31,6 +32,16 @@ class KittiDataset(DatasetTemplate):
 
         self.kitti_infos = []
         self.include_kitti_data(self.mode)
+
+        # CHANGE 
+        with open('/home/hpaat/pcdet/data/kitti/segpts/!all_pts.pkl', 'rb') as save_folder:
+            all_segpts_dic = pickle.load(save_folder)
+            self.all_segpts_dic = all_segpts_dic
+
+        # Changes made by Helbert
+        with open('/home/hpaat/my_exp/MTrans-U/uncertaintys_pred_iou_for_reweighting.pkl', 'rb') as weights_path:
+            loss_weights = pickle.load(weights_path)
+            self.loss_weights = loss_weights
 
     def include_kitti_data(self, mode):
         if self.logger is not None:
@@ -171,6 +182,7 @@ class KittiDataset(DatasetTemplate):
 
             if has_label:
                 obj_list = self.get_label(sample_idx)
+                if len(obj_list) == 0: return None
                 annotations = {}
                 annotations['name'] = np.array([obj.cls_type for obj in obj_list])
                 annotations['truncated'] = np.array([obj.truncation for obj in obj_list])
@@ -219,7 +231,13 @@ class KittiDataset(DatasetTemplate):
         sample_id_list = sample_id_list if sample_id_list is not None else self.sample_id_list
         with futures.ThreadPoolExecutor(num_workers) as executor:
             infos = executor.map(process_single_scene, sample_id_list)
-        return list(infos)
+        # Modified
+        final_result = list(infos)
+        while None in final_result:
+            final_result.remove(None)
+                    
+        return final_result
+        #return list(infos)
 
     def create_groundtruth_database(self, info_path=None, used_classes=None, split='train'):
         import torch
@@ -353,14 +371,82 @@ class KittiDataset(DatasetTemplate):
     def evaluation(self, det_annos, class_names, **kwargs):
         if 'annos' not in self.kitti_infos[0].keys():
             return None, {}
-
+        
         from .kitti_object_eval_python import eval as kitti_eval
+        eval_det_annos = copy.deepcopy(det_annos)                                   # List
+        eval_gt_annos = [copy.deepcopy(info['annos']) for info in self.kitti_infos] # List
 
-        eval_det_annos = copy.deepcopy(det_annos)
-        eval_gt_annos = [copy.deepcopy(info['annos']) for info in self.kitti_infos]
+        # with open('/home/hpaat/pcdet/output/kitti_models/pointrcnn/ftrans_666_pcdetaug/val_det_annos.pkl', 'wb') as handle:       # changed by Helbert PAAT
+        #     pickle.dump(eval_det_annos, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        # import pdb; pdb.set_trace()
+        
+        ##################################################################################################################################################################
+        # changed by Helbert PAAT
+        # filling missing TRAIN last det_annos empty values
+        if len(eval_det_annos) != len(eval_gt_annos):
+            num_samples = 0
+            eval_det_annos.append({
+                'name': np.zeros(num_samples), 'truncated': np.zeros(num_samples),
+                'occluded': np.zeros(num_samples), 'alpha': np.zeros(num_samples),
+                'bbox': np.zeros([num_samples, 4]), 'dimensions': np.zeros([num_samples, 3]),
+                'location': np.zeros([num_samples, 3]), 'rotation_y': np.zeros(num_samples),
+                'score': np.zeros(num_samples), 'boxes_lidar': np.zeros([num_samples, 7]),
+                'frame_id': '007479'
+            })
+
+        # Modified by Helbert PAAT
+        # Write a code to modify some values of eval_det_annos and change to GT to see which would improve the most
+        #eval_det_annos_new = self.modify_to_GT(copy.deepcopy(eval_det_annos), eval_gt_annos, []) #width", "length", "height", "location"])
+        ##################################################################################################################################################################
+        
         ap_result_str, ap_dict = kitti_eval.get_official_eval_result(eval_gt_annos, eval_det_annos, class_names)
 
         return ap_result_str, ap_dict
+
+    ##################################################################################################################################################################
+    # Modified by Helbert PAAT
+    def modify_to_GT(self, det, gt, mod_list):
+        det_copy =  copy.deepcopy(det)
+        for i in range(len(det)):
+            if len(det[i]['dimensions']) > 0:
+                for j in range(det[i]["dimensions"].shape[0]):
+                    k = self.find_max_iou_index(det_copy[i]['boxes_lidar'][j], gt[i]['gt_boxes_lidar']) 
+                    if "length" in mod_list:
+                        length_index = 0
+                        det[i]['dimensions'][j][length_index] = gt[i]['dimensions'][k][length_index] +0.001
+                    if "width" in mod_list:
+                        width_index = 1
+                        det[i]['dimensions'][j][width_index] = gt[i]['dimensions'][k][width_index] +0.001
+                    if "height" in mod_list:
+                    #    if np.random.rand(1)[0] < 0.50:
+                        height_index = 2
+                        det[i]['dimensions'][j][height_index] = gt[i]['dimensions'][k][height_index] +0.001
+                    if "location" in mod_list:
+                        det[i]['location'][j] = gt[i]['location'][k] +0.001
+                    else:
+                        if "x" in mod_list:
+                            det[i]['location'][j][0] = gt[i]['location'][k][0] +0.001
+                        if "y" in mod_list:
+                            det[i]['location'][j][1] = gt[i]['location'][k][1] +0.001
+                        if "z" in mod_list:
+                            det[i]['location'][j][2] = gt[i]['location'][k][2] +0.001
+                    det[i]['rotation_y'][j] = gt[i]['rotation_y'][k] +0.001
+                    #det[i]['boxes_lidar'][j] = gt[i]['gt_boxes_lidar'][k] +0.001 # default with comment
+                    #det[i]['alpha'][j] = gt[i]['alpha'][k] +0.001
+        return det
+
+    def find_max_iou_index(self, det_unique, gt_list):
+        #diff_list = []
+        iou_scores = box_utils.boxes3d_nearest_bev_iou(torch.tensor(det_unique.reshape(-1,7)).float(), torch.tensor(gt_list).float()).tolist()[0]
+        # for each_list in gt_list:
+        #     diff = abs(float(each_list[0]) - float(det_unique[0]))
+        #     diff += abs(float(each_list[1]) - float(det_unique[1]))
+        #     diff += abs(float(each_list[2]) - float(det_unique[2]))
+        #     diff_list.append(diff)
+        #mini = min(diff_list)
+        maxi = max(iou_scores)
+        return iou_scores.index(maxi)
+    ##################################################################################################################################################################
 
     def __len__(self):
         if self._merge_all_iters_to_one_epoch:
@@ -397,6 +483,7 @@ class KittiDataset(DatasetTemplate):
                 'gt_names': gt_names,
                 'gt_boxes': gt_boxes_lidar
             })
+
             if "gt_boxes2d" in get_item_list:
                 input_dict['gt_boxes2d'] = annos["bbox"]
 
@@ -420,11 +507,26 @@ class KittiDataset(DatasetTemplate):
 
         if "calib_matricies" in get_item_list:
             input_dict["trans_lidar_to_cam"], input_dict["trans_cam_to_img"] = kitti_utils.calib_to_matricies(calib)
+        
+        # Changes made by Helbert
+        frame_list = self.loss_weights[0]
+        weight_list = self.loss_weights[1]
+        input_dict['loss_weights'] = np.array([iou for idx, iou in enumerate(weight_list) if frame_list[idx] == input_dict["frame_id"]])
 
         data_dict = self.prepare_data(data_dict=input_dict)
 
         data_dict['image_shape'] = img_shape
-        
+         
+        # Changes made by Helbert 
+        data_dict['loss_weights'] = data_dict['loss_weights'].reshape(-1,1)
+        try:
+            data_dict['segpts'] = self.all_segpts_dic[data_dict["frame_id"]]
+            data_dict['segpts_cnt'] = len(self.all_segpts_dic[data_dict["frame_id"]])
+        except:
+            # For testing 
+            data_dict['segpts'] = np.array([])
+            data_dict['segpts_cnt'] = 0
+
         return data_dict
 
 

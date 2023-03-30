@@ -887,7 +887,7 @@ def get_point_cloud_my_version(LIDAR_PATH, frame_calib, image_shape=None, object
 
     return point_cloud.T, object_filter
 
-def get_point_cloud_weakly_version(points, tran_lidar_to_cam, tran_cam_to_img, image_shape=None, objects=None, back_cut=True, back_cut_z=-5.0):
+def get_point_cloud_weakly_version(points, tran_lidar_to_cam, tran_cam_to_img, image_shape=None, objects=None, image_filter=None, back_cut=True, back_cut_z=-5.0):
     ''' Calculates the lidar point cloud, and optionally returns only the
         points that are projected to the image.
 
@@ -910,7 +910,7 @@ def get_point_cloud_weakly_version(points, tran_lidar_to_cam, tran_cam_to_img, i
     # y = xyzi[:, 1]
     # z = xyzi[:, 2]
     # i = xyzi[:, 3]
-
+     
     # Calculate the point cloud
     # point_cloud = np.vstack((x, y, z))
     point_cloud = torch.matmul(points[:, 1:5], tran_lidar_to_cam.T) #lidar_to_cam_frame(point_cloud.T, frame_calib)  # N x 4
@@ -929,20 +929,17 @@ def get_point_cloud_weakly_version(points, tran_lidar_to_cam, tran_cam_to_img, i
     # Project to image frame
     # point_in_im = project_to_image(point_cloud, p=frame_calib.p2).T
 
-    # Filter based on the given image size
-    
-    image_filter = (point_in_im[:, 0] > 0) & \
-                    (point_in_im[:, 0] < im_size[0]) & \
-                    (point_in_im[:, 1] > 0) & \
-                    (point_in_im[:, 1] < im_size[1])
-
-    object_filter = torch.zeros(point_in_im.shape[0], dtype=bool).to(points2d.device)
-    if objects is not None:
-        for i in range(len(objects)):
-            object_filter = torch.logical_or(point_in_2Dbox(point_in_im, objects[i]), object_filter)
-
+    object_filter = torch.zeros(point_in_im.shape[0], dtype=bool).to(point_in_im.device)
+    if objects is not None and image_filter is not None:
+        object_filter = torch.logical_or(point_in_2Dbox(point_in_im, objects[0]), object_filter)
         object_filter = torch.logical_and(image_filter, object_filter)
     else:
+        # Filter based on the given image size
+        image_filter = (point_in_im[:, 0] > 0) & \
+                        (point_in_im[:, 0] < im_size[0]) & \
+                        (point_in_im[:, 1] > 0) & \
+                        (point_in_im[:, 1] < im_size[1])
+                        
         object_filter = image_filter
 
     #point_cloud = point_cloud.T[object_filter]

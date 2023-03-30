@@ -48,9 +48,11 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         )
     model.eval()
 
+    # MODIFIED by Helbert PAAT  <--  Uncomment these next blocks to bring original code
     if cfg.LOCAL_RANK == 0:
         progress_bar = tqdm.tqdm(total=len(dataloader), leave=True, desc='eval', dynamic_ncols=True)
     start_time = time.time()
+    
     for i, batch_dict in enumerate(dataloader):
         load_data_to_gpu(batch_dict)
         with torch.no_grad():
@@ -61,7 +63,7 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         annos = dataset.generate_prediction_dicts(
             batch_dict, pred_dicts, class_names,
             output_path=final_output_dir if save_to_file else None
-        )
+        ) # TODO What is alpha (observation angle of an object?
         det_annos += annos
         if cfg.LOCAL_RANK == 0:
             progress_bar.set_postfix(disp_dict)
@@ -93,8 +95,8 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     for cur_thresh in cfg.MODEL.POST_PROCESSING.RECALL_THRESH_LIST:
         cur_roi_recall = metric['recall_roi_%s' % str(cur_thresh)] / max(gt_num_cnt, 1)
         cur_rcnn_recall = metric['recall_rcnn_%s' % str(cur_thresh)] / max(gt_num_cnt, 1)
-        logger.info('recall_roi_%s: %f' % (cur_thresh, cur_roi_recall))
-        logger.info('recall_rcnn_%s: %f' % (cur_thresh, cur_rcnn_recall))
+        logger.info('recall_roi_%s: %f' % (cur_thresh, cur_roi_recall))     # TODO Interpretation of this?
+        logger.info('recall_rcnn_%s: %f' % (cur_thresh, cur_rcnn_recall))   # TODO Interpretation of this?
         ret_dict['recall/roi_%s' % str(cur_thresh)] = cur_roi_recall
         ret_dict['recall/rcnn_%s' % str(cur_thresh)] = cur_rcnn_recall
 
@@ -103,9 +105,16 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         total_pred_objects += anno['name'].__len__()
     logger.info('Average predicted number of objects(%d samples): %.3f'
                 % (len(det_annos), total_pred_objects / max(1, len(det_annos))))
-
+    
     with open(result_dir / 'result.pkl', 'wb') as f:
         pickle.dump(det_annos, f)
+    
+#########################################################################################################################################################################################################################
+    # Modified/changed by Helbert PAAT
+    # NOTE Comment out these 2 lines. This is for MTrans evaluation purpose only where we load a det_annos from another saved file.
+    # with open('/home/hpaat/my_exp/MTrans-U/output/kitti_fgr/det_annos_init150_epi5/pred_iou_correct_code/det_annos_299_train.pkl', 'rb') as f: 
+    #     det_annos = pickle.load(f)
+#########################################################################################################################################################################################################################
 
     result_str, result_dict = dataset.evaluation(
         det_annos, class_names,
@@ -119,7 +128,6 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     logger.info('Result is save to %s' % result_dir)
     logger.info('****************Evaluation done.*****************')
     return ret_dict
-
 
 if __name__ == '__main__':
     pass

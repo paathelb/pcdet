@@ -85,28 +85,31 @@ class BaseBEVBackbone(nn.Module):
                 spatial_features
         Returns:
         """
-        spatial_features = data_dict['spatial_features']
+        spatial_features = data_dict['spatial_features'] # B x BEV x ny x nx
         ups = []
         ret_dict = {}
         x = spatial_features
         for i in range(len(self.blocks)):
-            x = self.blocks[i](x)
+            x = self.blocks[i](x) # B x BEV x ny_new x nx_new 
+            # For i=0, BEV=64, ny_new=248, nx_new=216 # For i=1, BEV=128, ny_new=124, nx_new=108
+            # For i=2, BEV=256, ny_new=62, nx_new=54 
 
             stride = int(spatial_features.shape[2] / x.shape[2])
             ret_dict['spatial_features_%dx' % stride] = x
             if len(self.deblocks) > 0:
-                ups.append(self.deblocks[i](x))
+                ups.append(self.deblocks[i](x)) # B x BEV x ny_new x nx_new 
+                # For i=0,1,2, BEV=128, ny_new=248, nx_new=216
             else:
                 ups.append(x)
 
         if len(ups) > 1:
-            x = torch.cat(ups, dim=1)
+            x = torch.cat(ups, dim=1) # B x 384 x ny_new=248 x nx_new=216 
         elif len(ups) == 1:
             x = ups[0]
 
         if len(self.deblocks) > len(self.blocks):
             x = self.deblocks[-1](x)
 
-        data_dict['spatial_features_2d'] = x
+        data_dict['spatial_features_2d'] = x # B x 384 x 248 x 216 
 
         return data_dict

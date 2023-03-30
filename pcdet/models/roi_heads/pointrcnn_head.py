@@ -139,7 +139,7 @@ class PointRCNNHead(RoIHeadTemplate):
         """
         targets_dict = self.proposal_layer(
             batch_dict, nms_config=self.model_cfg.NMS_CONFIG['TRAIN' if self.training else 'TEST']
-        )
+        ) 
         if self.training:
             targets_dict = self.assign_targets(batch_dict)
             batch_dict['rois'] = targets_dict['rois']
@@ -163,7 +163,7 @@ class PointRCNNHead(RoIHeadTemplate):
         shared_features = l_features[-1]  # (total_rois, num_features, 1)
         rcnn_cls = self.cls_layers(shared_features).transpose(1, 2).contiguous().squeeze(dim=1)  # (B, 1 or 2)
         rcnn_reg = self.reg_layers(shared_features).transpose(1, 2).contiguous().squeeze(dim=1)  # (B, C)
-
+        
         if not self.training:
             batch_cls_preds, batch_box_preds = self.generate_predicted_boxes(
                 batch_size=batch_dict['batch_size'], rois=batch_dict['rois'], cls_preds=rcnn_cls, box_preds=rcnn_reg
@@ -174,6 +174,10 @@ class PointRCNNHead(RoIHeadTemplate):
         else:
             targets_dict['rcnn_cls'] = rcnn_cls
             targets_dict['rcnn_reg'] = rcnn_reg
+            
+            # Changes made by Helbert
+            targets_dict['loss_weights'] = batch_dict['loss_weights']
+            targets_dict['batch_size'] = batch_dict['batch_size']
 
             self.forward_ret_dict = targets_dict
         return batch_dict

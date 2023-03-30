@@ -129,8 +129,8 @@ class PointHeadTemplate(nn.Module):
         return targets_dict
 
     def get_cls_layer_loss(self, tb_dict=None):
-        point_cls_labels = self.forward_ret_dict['point_cls_labels'].view(-1)
-        point_cls_preds = self.forward_ret_dict['point_cls_preds'].view(-1, self.num_class)
+        point_cls_labels = self.forward_ret_dict['point_cls_labels'].view(-1)                   # 16384
+        point_cls_preds = self.forward_ret_dict['point_cls_preds'].view(-1, self.num_class)     # 16384 x 1
 
         positives = (point_cls_labels > 0)
         negative_cls_weights = (point_cls_labels == 0) * 1.0
@@ -140,7 +140,7 @@ class PointHeadTemplate(nn.Module):
 
         one_hot_targets = point_cls_preds.new_zeros(*list(point_cls_labels.shape), self.num_class + 1)
         one_hot_targets.scatter_(-1, (point_cls_labels * (point_cls_labels >= 0).long()).unsqueeze(dim=-1).long(), 1.0)
-        one_hot_targets = one_hot_targets[..., 1:]
+        one_hot_targets = one_hot_targets[..., 1:]                      # 16384 x 1
         cls_loss_src = self.cls_loss_func(point_cls_preds, one_hot_targets, weights=cls_weights)
         point_loss_cls = cls_loss_src.sum()
 
@@ -170,9 +170,9 @@ class PointHeadTemplate(nn.Module):
         return point_loss_part, tb_dict
 
     def get_box_layer_loss(self, tb_dict=None):
-        pos_mask = self.forward_ret_dict['point_cls_labels'] > 0
-        point_box_labels = self.forward_ret_dict['point_box_labels']
-        point_box_preds = self.forward_ret_dict['point_box_preds']
+        pos_mask = self.forward_ret_dict['point_cls_labels'] > 0        # 16384
+        point_box_labels = self.forward_ret_dict['point_box_labels']    # 16384 x 8
+        point_box_preds = self.forward_ret_dict['point_box_preds']      # 16384 x 8
 
         reg_weights = pos_mask.float()
         pos_normalizer = pos_mask.sum().float()

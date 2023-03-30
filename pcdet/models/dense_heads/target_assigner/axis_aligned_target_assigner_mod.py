@@ -33,28 +33,39 @@ class AxisAlignedTargetAssigner(object):
         #         for idx, name in enumerate(rpn_head_cfg['HEAD_CLS_NAME']):
         #             self.gt_remapping[name] = idx + 1
 
-    def assign_targets(self, all_anchors, gt_boxes_with_classes):
+    def assign_targets(self, all_anchors, gt_boxes_with_classes, gt_boxes2d_with_classes=None):
         """
         Args:
             all_anchors: [(N, 7), ...]
             gt_boxes: (B, M, 8)
         Returns:
-
         """
-
+        
         bbox_targets = []
+        bbox2d_targets = []
         cls_labels = []
         reg_weights = []
-
         batch_size = gt_boxes_with_classes.shape[0]
         gt_classes = gt_boxes_with_classes[:, :, -1]
-        gt_boxes = gt_boxes_with_classes[:, :, :-1]
+        gt_boxes = gt_boxes_with_classes
+        if gt_boxes2d_with_classes is not None:
+            # NOTE currently, we use the 3D bounding boxes annotation to do the target assignment
+            # TODO In the next step, we should replace it with 2D bounding boxes.
+            gt_boxes2d = gt_boxes2d_with_classes
+        else:
+            gt_boxes2d = None
         for k in range(batch_size):
             cur_gt = gt_boxes[k]
+            if gt_boxes2d is not None:
+                curr_gt2d = gt_boxes2d[k]
             cnt = cur_gt.__len__() - 1
+
             while cnt > 0 and cur_gt[cnt].sum() == 0:
                 cnt -= 1
             cur_gt = cur_gt[:cnt + 1]
+            if gt_boxes2d is not None:
+                curr_gt2d = curr_gt2d[:cnt + 1]
+
             cur_gt_classes = gt_classes[k][:cnt + 1].int()
 
             target_list = []
@@ -79,16 +90,25 @@ class AxisAlignedTargetAssigner(object):
                     feature_map_size = anchors.shape[:3]
                     anchors = anchors.view(-1, anchors.shape[-1])
                     selected_classes = cur_gt_classes[mask]
-
-                single_target = self.assign_targets_single(
-                    anchors,
-                    cur_gt[mask],
-                    gt_classes=selected_classes,
-                    matched_threshold=self.matched_thresholds[anchor_class_name],
-                    unmatched_threshold=self.unmatched_thresholds[anchor_class_name]
-                )
+                if gt_boxes2d is None:
+                    single_target = self.assign_targets_single(
+                        anchors,
+                        cur_gt[mask],
+                        gt_classes=selected_classes,
+                        matched_threshold=self.matched_thresholds[anchor_class_name],
+                        unmatched_threshold=self.unmatched_thresholds[anchor_class_name]
+                    )
+                else:
+                    single_target = self.assign_targets_single(
+                        anchors,
+                        cur_gt[mask],
+                        gt_classes=selected_classes,
+                        matched_threshold=self.matched_thresholds[anchor_class_name],
+                        unmatched_threshold=self.unmatched_thresholds[anchor_class_name],
+                        gt_boxes2d=curr_gt2d[mask],
+                    )
                 target_list.append(single_target)
-
+            # consider how to do the conversion
             if self.use_multihead:
                 target_dict = {
                     'box_cls_labels': [t['box_cls_labels'].view(-1) for t in target_list],
@@ -99,6 +119,9 @@ class AxisAlignedTargetAssigner(object):
                 target_dict['box_reg_targets'] = torch.cat(target_dict['box_reg_targets'], dim=0)
                 target_dict['box_cls_labels'] = torch.cat(target_dict['box_cls_labels'], dim=0).view(-1)
                 target_dict['reg_weights'] = torch.cat(target_dict['reg_weights'], dim=0).view(-1)
+                if gt_boxes2d is not None:
+                    target_dict["box2d_reg_targets"] = [t['box2d_reg_targets'].view(-1, 4) for t in target_list]
+                    target_dict["box2d_reg_targets"] = torch.cat(target_dict["box2d_reg_targets"], dim=0).view(-1)
             else:
                 target_dict = {
                     'box_cls_labels': [t['box_cls_labels'].view(*feature_map_size, -1) for t in target_list],
@@ -113,11 +136,23 @@ class AxisAlignedTargetAssigner(object):
                 target_dict['box_cls_labels'] = torch.cat(target_dict['box_cls_labels'], dim=-1).view(-1)
                 target_dict['reg_weights'] = torch.cat(target_dict['reg_weights'], dim=-1).view(-1)
 
+                if gt_boxes2d is not None:
+                    target_dict["box2d_reg_targets"] = [t['box2d_reg_targets'].view(*feature_map_size, -1, 4)
+                                        for t in target_list]
+                    
+                    target_dict["box2d_reg_targets"] = torch.cat(
+                        target_dict["box2d_reg_targets"], dim=-2).view(-1, 4)
+                    
             bbox_targets.append(target_dict['box_reg_targets'])
             cls_labels.append(target_dict['box_cls_labels'])
             reg_weights.append(target_dict['reg_weights'])
+            if "box2d_reg_targets" in target_dict:
+                bbox2d_targets.append(target_dict["box2d_reg_targets"])
+            
 
         bbox_targets = torch.stack(bbox_targets, dim=0)
+        if len(bbox2d_targets) > 0:
+            bbox2d_targets = torch.stack(bbox2d_targets, dim=0)
 
         cls_labels = torch.stack(cls_labels, dim=0)
         reg_weights = torch.stack(reg_weights, dim=0)
@@ -127,9 +162,17 @@ class AxisAlignedTargetAssigner(object):
             'reg_weights': reg_weights
 
         }
+
+        if len(bbox2d_targets) > 0:
+            all_targets_dict["box2d_reg_targets"] = bbox2d_targets
+
+
         return all_targets_dict
 
-    def assign_targets_single(self, anchors, gt_boxes, gt_classes, matched_threshold=0.6, unmatched_threshold=0.45):
+
+    # def assign_tar
+    def assign_targets_single(self, anchors, gt_boxes, gt_classes, matched_threshold=0.6, unmatched_threshold=0.45,
+                                    gt_boxes2d=None):
 
         num_anchors = anchors.shape[0]
         num_gt = gt_boxes.shape[0]
@@ -138,16 +181,16 @@ class AxisAlignedTargetAssigner(object):
         gt_ids = torch.ones((num_anchors,), dtype=torch.int32, device=anchors.device) * -1
 
         if len(gt_boxes) > 0 and anchors.shape[0] > 0:
+            # TODO IN THE FUTURE, we should convert it to 2D bboxes for the assingment.
             anchor_by_gt_overlap = iou3d_nms_utils.boxes_iou3d_gpu(anchors[:, 0:7], gt_boxes[:, 0:7]) \
                 if self.match_height else box_utils.boxes3d_nearest_bev_iou(anchors[:, 0:7], gt_boxes[:, 0:7])
 
-            # NOTE: The speed of these two versions depends the environment and the number of anchors
-            # anchor_to_gt_argmax = torch.from_numpy(anchor_by_gt_overlap.cpu().numpy().argmax(axis=1)).cuda()
-            anchor_to_gt_argmax = anchor_by_gt_overlap.argmax(dim=1)
-            anchor_to_gt_max = anchor_by_gt_overlap[torch.arange(num_anchors, device=anchors.device), anchor_to_gt_argmax]
+            anchor_to_gt_argmax = torch.from_numpy(anchor_by_gt_overlap.cpu().numpy().argmax(axis=1)).cuda()
+            anchor_to_gt_max = anchor_by_gt_overlap[
+                torch.arange(num_anchors, device=anchors.device), anchor_to_gt_argmax
+            ]
 
-            # gt_to_anchor_argmax = torch.from_numpy(anchor_by_gt_overlap.cpu().numpy().argmax(axis=0)).cuda()
-            gt_to_anchor_argmax = anchor_by_gt_overlap.argmax(dim=0)
+            gt_to_anchor_argmax = torch.from_numpy(anchor_by_gt_overlap.cpu().numpy().argmax(axis=0)).cuda()
             gt_to_anchor_max = anchor_by_gt_overlap[gt_to_anchor_argmax, torch.arange(num_gt, device=anchors.device)]
             empty_gt_mask = gt_to_anchor_max == 0
             gt_to_anchor_max[empty_gt_mask] = -1
@@ -186,12 +229,17 @@ class AxisAlignedTargetAssigner(object):
             else:
                 labels[bg_inds] = 0
                 labels[anchors_with_max_overlap] = gt_classes[gt_inds_force]
-
+        import pdb; pdb.set_trace() 
         bbox_targets = anchors.new_zeros((num_anchors, self.box_coder.code_size))
+        bbox2d_targets = anchors.new_zeros((num_anchors, 4))
         if len(gt_boxes) > 0 and anchors.shape[0] > 0:
             fg_gt_boxes = gt_boxes[anchor_to_gt_argmax[fg_inds], :]
             fg_anchors = anchors[fg_inds, :]
             bbox_targets[fg_inds, :] = self.box_coder.encode_torch(fg_gt_boxes, fg_anchors)
+            if gt_boxes2d is not None:
+                fg_gt_boxes2d = gt_boxes2d[anchor_to_gt_argmax[fg_inds], :]
+                # bbox2d_targets[fg_inds, :] = self.box_coder.encode_torch(fg_gt_boxes2d, fg_anchors)
+                bbox2d_targets[fg_inds, :] = fg_gt_boxes2d
 
         reg_weights = anchors.new_zeros((num_anchors,))
 
@@ -207,4 +255,7 @@ class AxisAlignedTargetAssigner(object):
             'box_reg_targets': bbox_targets,
             'reg_weights': reg_weights,
         }
+
+        if gt_boxes2d is not None:
+            ret_dict["box2d_reg_targets"] = bbox2d_targets
         return ret_dict
