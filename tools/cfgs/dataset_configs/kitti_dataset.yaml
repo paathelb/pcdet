@@ -10,7 +10,7 @@ DATA_SPLIT: {
 
 INFO_PATH: {
     'train': [kitti_infos_train.pkl],
-    'test': [kitti_infos_val.pkl],                              # Change/Modify this for evaluation of training pseudo labels 
+    'test': [kitti_infos_val.pkl],                                # Change/Modify this for evaluation of training pseudo labels 
 }
 
 GET_ITEM_LIST: ["points"] #, "calib_matricies", "gt_boxes2d"]     # changed by Helbert PAAT  # enable "calib_matricies", "gt_boxes2d" for pointpillars

@@ -196,11 +196,18 @@ class NuScenesDataset(DatasetTemplate):
         return annos
 
     def evaluation(self, det_annos, class_names, **kwargs):
-        import pdb; pdb.set_trace() 
+        
         import json
         from nuscenes.nuscenes import NuScenes
         from . import nuscenes_utils
         nusc = NuScenes(version=self.dataset_cfg.VERSION, dataroot=str(self.root_path), verbose=True)
+
+        # Fix to small 'c' in name 'car'. changed by Helbert
+        for id, annos in enumerate(det_annos):
+            for idx,name in enumerate(annos['name']):
+                if name=='Car':
+                    det_annos[id]['name'][idx] = 'car'
+
         nusc_annos = nuscenes_utils.transform_det_annos_to_nusc_annos(det_annos, nusc)
         nusc_annos['meta'] = {
             'use_camera': False,
@@ -235,7 +242,7 @@ class NuScenesDataset(DatasetTemplate):
         except:
             eval_version = 'cvpr_2019'
             eval_config = config_factory(eval_version)
-
+        import pdb; pdb.set_trace() 
         nusc_eval = NuScenesEval(
             nusc,
             config=eval_config,

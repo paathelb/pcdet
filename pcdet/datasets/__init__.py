@@ -55,7 +55,7 @@ def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None,
         logger=logger,
     )
    
-    # _ = dataset[2] 
+    _ = dataset[2] 
     # _ = dataset.collate_batch([dataset[1],dataset[2]])
     
     if merge_all_iters_to_one_epoch:

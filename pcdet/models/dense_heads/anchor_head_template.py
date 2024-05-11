@@ -16,6 +16,8 @@ class AnchorHeadTemplate(nn.Module):
         self.class_names = class_names
         self.predict_boxes_when_training = predict_boxes_when_training
         self.use_multihead = self.model_cfg.get('USE_MULTIHEAD', False)
+        self.weights_per_object = model_cfg.WEIGHTED                                             # Changes made by Helbert
+        self.weights_exponent = model_cfg.WEIGHT_EXP                                             # Changes made by Helbert
 
         anchor_target_cfg = self.model_cfg.TARGET_ASSIGNER_CONFIG
         self.box_coder = getattr(box_coder_utils, anchor_target_cfg.BOX_CODER)(
@@ -72,10 +74,18 @@ class AnchorHeadTemplate(nn.Module):
         return target_assigner
 
     def build_losses(self, losses_cfg):
-        self.add_module(
-            'cls_loss_func',
-            loss_utils.SigmoidFocalClassificationLoss(alpha=0.25, gamma=2.0)
-        )
+        # Changes made by Helbert
+        if self.weights_per_object:
+            self.add_module(
+                'cls_loss_func',
+                loss_utils.SigmoidFocalClassificationLoss_ManualWeights(alpha=0.25, gamma=1.0)
+            )
+        else:
+            self.add_module(
+                'cls_loss_func',
+                loss_utils.SigmoidFocalClassificationLoss(alpha=0.25, gamma=2.0)
+            )
+
         reg_loss_name = 'WeightedSmoothL1Loss' if losses_cfg.get('REG_LOSS_TYPE', None) is None \
             else losses_cfg.REG_LOSS_TYPE
         self.add_module(
@@ -100,6 +110,7 @@ class AnchorHeadTemplate(nn.Module):
         return targets_dict
 
     def get_cls_layer_loss(self):
+        
         cls_preds = self.forward_ret_dict['cls_preds']
         box_cls_labels = self.forward_ret_dict['box_cls_labels']
         batch_size = int(cls_preds.shape[0])
@@ -112,6 +123,20 @@ class AnchorHeadTemplate(nn.Module):
         if self.num_class == 1:
             # class agnostic
             box_cls_labels[positives] = 1
+        
+        # Changes made by Helbert
+        if self.weights_per_object:
+            batch_gt_assignment = self.forward_ret_dict['gt_assignment']
+            loss_weights = self.forward_ret_dict['loss_weights'].squeeze(-1)
+            zeros = loss_weights.new_zeros((loss_weights.shape[0],1))
+            loss_weights = torch.cat((loss_weights, zeros), dim=1)
+            batch_loss_weights = box_cls_labels.new_zeros((box_cls_labels.shape[0], box_cls_labels.shape[1]), dtype=torch.float32)
+            for index in range(box_cls_labels.shape[0]):
+                batch_loss_weights[index] = loss_weights[index][batch_gt_assignment[index]].squeeze(-1)
+            
+            batch_loss_weights = torch.pow(batch_loss_weights, self.weights_exponent)
+        # NOTE
+        # batch_loss_weights += 1.0
 
         pos_normalizer = positives.sum(1, keepdim=True).float()
         reg_weights /= torch.clamp(pos_normalizer, min=1.0)
@@ -126,7 +151,13 @@ class AnchorHeadTemplate(nn.Module):
         one_hot_targets.scatter_(-1, cls_targets.unsqueeze(dim=-1).long(), 1.0)
         cls_preds = cls_preds.view(batch_size, -1, self.num_class)
         one_hot_targets = one_hot_targets[..., 1:]
-        cls_loss_src = self.cls_loss_func(cls_preds, one_hot_targets, weights=cls_weights)  # [N, M]
+        
+        # Changes made by Helbert
+        if self.weights_per_object:
+            cls_loss_src = self.cls_loss_func(cls_preds, one_hot_targets, neg_weights=negative_cls_weights, weights=cls_weights, predefined_weights=batch_loss_weights)  # [N, M]
+        else:
+            cls_loss_src = self.cls_loss_func(cls_preds, one_hot_targets, weights=cls_weights)                                                                           # [N, M]
+
         cls_loss = cls_loss_src.sum() / batch_size
 
         cls_loss = cls_loss * self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['cls_weight']
@@ -172,6 +203,18 @@ class AnchorHeadTemplate(nn.Module):
         pos_normalizer = positives.sum(1, keepdim=True).float()
         reg_weights /= torch.clamp(pos_normalizer, min=1.0)
 
+        # Changes made by Helbert
+        if self.weights_per_object:
+            batch_gt_assignment = self.forward_ret_dict['gt_assignment']
+            loss_weights = self.forward_ret_dict['loss_weights'].squeeze(-1)
+            zeros = loss_weights.new_zeros((loss_weights.shape[0],1))
+            loss_weights = torch.cat((loss_weights, zeros), dim=1)
+            batch_loss_weights = box_reg_targets.new_zeros((box_reg_targets.shape[0], box_reg_targets.shape[1]), dtype = torch.float32)
+            for index in range(box_reg_targets.shape[0]):
+                batch_loss_weights[index] = loss_weights[index][batch_gt_assignment[index]].squeeze(-1)
+
+            batch_loss_weights = torch.pow(batch_loss_weights, self.weights_exponent)
+        
         if isinstance(self.anchors, list):
             if self.use_multihead:
                 anchors = torch.cat(
@@ -186,9 +229,22 @@ class AnchorHeadTemplate(nn.Module):
                                    box_preds.shape[-1] // self.num_anchors_per_location if not self.use_multihead else
                                    box_preds.shape[-1])
         # sin(a - b) = sinacosb-cosasinb
+        
         box_preds_sin, reg_targets_sin = self.add_sin_difference(box_preds, box_reg_targets)
-        loc_loss_src = self.reg_loss_func(box_preds_sin, reg_targets_sin, weights=reg_weights)  # [N, M]
-        loc_loss = loc_loss_src.sum() / batch_size
+        
+        loc_loss_src = self.reg_loss_func(box_preds_sin, reg_targets_sin, weights=reg_weights)              # [N, M]
+
+        # Changes made by Helbert
+        if self.weights_per_object:
+            loc_loss_src_sum = loc_loss_src.sum(axis=(1,2))
+            assert batch_loss_weights.shape[0] == loc_loss_src.shape[0] and batch_loss_weights.shape[1] == loc_loss_src.shape[1]
+            loc_loss_src = loc_loss_src * batch_loss_weights.unsqueeze(-1)
+            with torch.no_grad():
+                scale = (loc_loss_src_sum / (torch.sum(loc_loss_src, axis=(1,2))+1e-5)).reshape(-1,1,1)
+            loc_loss_src = scale * loc_loss_src
+            loc_loss = loc_loss_src.sum() / batch_size
+        else:
+            loc_loss = loc_loss_src.sum() / batch_size
 
         loc_loss = loc_loss * self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['loc_weight']
         box_loss = loc_loss
@@ -206,16 +262,37 @@ class AnchorHeadTemplate(nn.Module):
             dir_logits = box_dir_cls_preds.view(batch_size, -1, self.model_cfg.NUM_DIR_BINS)
             weights = positives.type_as(dir_logits)
             weights /= torch.clamp(weights.sum(-1, keepdim=True), min=1.0)
-            dir_loss = self.dir_loss_func(dir_logits, dir_targets, weights=weights)
-            dir_loss = dir_loss.sum() / batch_size
+            
+            # Changes made by Helbert
+            if self.weights_per_object:
+                # dir_loss_orig = self.dir_loss_func(dir_logits, dir_targets, weights=weights)
+                # # dir_targets[:, :, 1] = dir_targets[:, :, 1] * batch_loss_weights
+                # # dir_targets[:, :, 0] = dir_targets[:, :, 0] * (1-batch_loss_weights)
+                # dir_loss = self.dir_loss_func(dir_logits, dir_targets, weights=weights)
+
+                # dir_loss_sum = dir_loss_orig.sum(axis=(1))
+                # assert batch_loss_weights.shape[0] == dir_loss.shape[0] and batch_loss_weights.shape[1] == dir_loss.shape[1]
+                # # dir_loss = dir_loss * batch_loss_weights.ceil()
+                # with torch.no_grad():
+                #     scale = (dir_loss_sum / (torch.sum(dir_loss, axis=(1))+1e-5)).reshape(-1,1)
+                # dir_loss = scale * dir_loss
+                # dir_loss = dir_loss.sum() / batch_size
+                dir_loss = self.dir_loss_func(dir_logits, dir_targets, weights=weights)
+                dir_loss = dir_loss.sum() / batch_size
+            else:
+                dir_loss = self.dir_loss_func(dir_logits, dir_targets, weights=weights)
+                dir_loss = dir_loss.sum() / batch_size
+
             dir_loss = dir_loss * self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS['dir_weight']
             box_loss += dir_loss
             tb_dict['rpn_loss_dir'] = dir_loss.item()
-
+        
         return box_loss, tb_dict
 
     def get_loss(self):
-        cls_loss, tb_dict = self.get_cls_layer_loss()
+        try: cls_loss, tb_dict = self.get_cls_layer_loss()
+        except: 
+            cls_loss, tb_dict = self.get_cls_layer_loss()
         box_loss, tb_dict_box = self.get_box_reg_layer_loss()
         tb_dict.update(tb_dict_box)
         rpn_loss = cls_loss + box_loss

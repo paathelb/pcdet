@@ -19,6 +19,7 @@ class RoIHeadTemplate(nn.Module):
         self.proposal_target_layer = ProposalTargetLayer(roi_sampler_cfg=self.model_cfg.TARGET_CONFIG)
         self.build_losses(self.model_cfg.LOSS_CONFIG)
         self.forward_ret_dict = None
+        self.weights_per_object = model_cfg.WEIGHTED                                             # Changes made by Helbert
 
     def build_losses(self, losses_cfg):
         self.add_module(
@@ -142,6 +143,14 @@ class RoIHeadTemplate(nn.Module):
         rcnn_reg = forward_ret_dict['rcnn_reg']  # (rcnn_batch_size, C)
         roi_boxes3d = forward_ret_dict['rois']
         rcnn_batch_size = gt_boxes3d_ct.view(-1, code_size).shape[0]
+        
+        # Changes made by Helbert
+        if self.weights_per_object:
+            batch_gt_assignment = forward_ret_dict['gt_assignment']
+            loss_weights = forward_ret_dict['loss_weights'].squeeze(-1)
+            batch_loss_weights = gt_boxes3d_ct.new_zeros((gt_boxes3d_ct.shape[0], gt_boxes3d_ct.shape[1]))
+            for index in range(gt_boxes3d_ct.shape[0]):
+                batch_loss_weights[index] = loss_weights[index][batch_gt_assignment[index]].squeeze(-1)
 
         fg_mask = (reg_valid_mask > 0)
         fg_sum = fg_mask.long().sum().item()
@@ -160,6 +169,15 @@ class RoIHeadTemplate(nn.Module):
                 rcnn_reg.view(rcnn_batch_size, -1).unsqueeze(dim=0),
                 reg_targets.unsqueeze(dim=0),
             )  # [B, M, 7]
+            
+            # Changes made by Helbert
+            if self.weights_per_object:
+                rcnn_loss_reg = rcnn_loss_reg.view(-1, gt_boxes3d_ct.shape[1], code_size)
+                rcnn_loss_reg_sum = rcnn_loss_reg.sum(axis=(1,2))
+                assert batch_loss_weights.shape[0] == rcnn_loss_reg.shape[0] and batch_loss_weights.shape[1] == rcnn_loss_reg.shape[1]
+                rcnn_loss_reg = rcnn_loss_reg * batch_loss_weights.unsqueeze(-1)
+                # rcnn_loss_reg = (rcnn_loss_reg_sum / (torch.sum(rcnn_loss_reg, axis=(1,2))+1e-5)).reshape(-1,1,1) * rcnn_loss_reg
+
             rcnn_loss_reg = (rcnn_loss_reg.view(rcnn_batch_size, -1) * fg_mask.unsqueeze(dim=-1).float()).sum() / max(fg_sum, 1)
             rcnn_loss_reg = rcnn_loss_reg * loss_cfgs.LOSS_WEIGHTS['rcnn_reg_weight']
             tb_dict['rcnn_loss_reg'] = rcnn_loss_reg.item()
@@ -187,7 +205,17 @@ class RoIHeadTemplate(nn.Module):
                     rcnn_boxes3d[:, 0:7],
                     gt_of_rois_src[fg_mask][:, 0:7]
                 )
-                loss_corner = loss_corner.mean()
+                
+                # Changes made by Helbert
+                if self.weights_per_object:
+                    batch_loss_corner = gt_boxes3d_ct.new_zeros((gt_boxes3d_ct.shape[0], gt_boxes3d_ct.shape[1]))
+                    batch_loss_corner[fg_mask.reshape(gt_boxes3d_ct.shape[0],-1)] = loss_corner
+                    batch_loss_corner_sum = batch_loss_corner.sum(axis=(1))
+                    batch_loss_corner = batch_loss_corner * batch_loss_weights
+                    # batch_loss_corner = (batch_loss_corner_sum / (torch.sum(batch_loss_corner, axis=(1))+1e-5)).reshape(-1,1) * batch_loss_corner
+                    loss_corner = batch_loss_corner.sum() / len(batch_loss_corner.nonzero())
+
+                loss_corner = loss_corner.mean()        # Commented out by Helbert
                 loss_corner = loss_corner * loss_cfgs.LOSS_WEIGHTS['rcnn_corner_weight']
 
                 rcnn_loss_reg += loss_corner
@@ -201,14 +229,29 @@ class RoIHeadTemplate(nn.Module):
         loss_cfgs = self.model_cfg.LOSS_CONFIG
         rcnn_cls = forward_ret_dict['rcnn_cls']                         # 256 x 1
         rcnn_cls_labels = forward_ret_dict['rcnn_cls_labels'].view(-1)  # 256
+        
+        # import pdb; pdb.set_trace() 
+        # Changes made by Helbert
+        # batch_gt_assignment = forward_ret_dict['gt_assignment']
+        # loss_weights = forward_ret_dict['loss_weights'].squeeze(-1)
+        # batch_loss_weights = batch_gt_assignment.new_zeros((batch_gt_assignment.shape[0], batch_gt_assignment.shape[1]), dtype=torch.float)
+        # for index in range(batch_gt_assignment.shape[0]):
+        #     batch_loss_weights[index] = loss_weights[index][batch_gt_assignment[index]].squeeze(-1)
 
         if loss_cfgs.CLS_LOSS == 'BinaryCrossEntropy':
             rcnn_cls_flat = rcnn_cls.view(-1)
-            # Changes made by Helbert
-            loss_weights = forward_ret_dict['loss_weights']
-            batch_size = forward_ret_dict['batch_size']
 
             batch_loss_cls = F.binary_cross_entropy(torch.sigmoid(rcnn_cls_flat), rcnn_cls_labels.float(), reduction='none')
+
+            # Changes made by Helbert
+            # batch_size = batch_gt_assignment.shape[0]
+            # batch_loss_cls = batch_loss_cls.reshape(batch_size, -1)
+            # batch_loss_cls_sum = batch_loss_cls.sum(axis=[1])
+            # batch_loss_cls = batch_loss_cls * batch_loss_weights
+            # try: batch_loss_cls = (batch_loss_cls_sum / (torch.sum(batch_loss_cls, axis=[1]))).reshape(-1,1) * batch_loss_cls
+            # except: batch_loss_cls = (batch_loss_cls_sum / (torch.sum(batch_loss_cls, axis=[1]) + 1e-5)).reshape(-1,1) * batch_loss_cls
+            # batch_loss_cls = batch_loss_cls.view(-1)
+            
             cls_valid_mask = (rcnn_cls_labels >= 0).float()
             rcnn_loss_cls = (batch_loss_cls * cls_valid_mask).sum() / torch.clamp(cls_valid_mask.sum(), min=1.0)
         elif loss_cfgs.CLS_LOSS == 'CrossEntropy':

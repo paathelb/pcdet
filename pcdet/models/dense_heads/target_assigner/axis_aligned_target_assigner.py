@@ -45,6 +45,10 @@ class AxisAlignedTargetAssigner(object):
         bbox_targets = []
         cls_labels = []
         reg_weights = []
+        # TODO Add to config
+        gt_assign = False
+        if gt_assign:
+            gt_assignment = []  # Changes made by Helbert
 
         batch_size = gt_boxes_with_classes.shape[0]
         gt_classes = gt_boxes_with_classes[:, :, -1]
@@ -56,7 +60,7 @@ class AxisAlignedTargetAssigner(object):
                 cnt -= 1
             cur_gt = cur_gt[:cnt + 1]
             cur_gt_classes = gt_classes[k][:cnt + 1].int()
-
+            
             target_list = []
             for anchor_class_name, anchors in zip(self.anchor_class_names, all_anchors):
                 if cur_gt_classes.shape[0] > 1:
@@ -113,20 +117,37 @@ class AxisAlignedTargetAssigner(object):
                 target_dict['box_cls_labels'] = torch.cat(target_dict['box_cls_labels'], dim=-1).view(-1)
                 target_dict['reg_weights'] = torch.cat(target_dict['reg_weights'], dim=-1).view(-1)
 
+                # Changes made by Helbert
+                if gt_assign:
+                    target_dict['gt_assignment'] = [t['gt_assignment'].view(*feature_map_size, -1) for t in target_list]
+                    target_dict['gt_assignment'] = torch.cat(target_dict['gt_assignment'], dim=-1).view(-1)
+
             bbox_targets.append(target_dict['box_reg_targets'])
             cls_labels.append(target_dict['box_cls_labels'])
             reg_weights.append(target_dict['reg_weights'])
+            if gt_assign: gt_assignment.append(target_dict['gt_assignment'])          # Changes made by Helbert
 
         bbox_targets = torch.stack(bbox_targets, dim=0)
 
         cls_labels = torch.stack(cls_labels, dim=0)
         reg_weights = torch.stack(reg_weights, dim=0)
-        all_targets_dict = {
-            'box_cls_labels': cls_labels,
-            'box_reg_targets': bbox_targets,
-            'reg_weights': reg_weights
 
-        }
+        if gt_assign: gt_assignment = torch.stack(gt_assignment, dim=0)               # Changes made by Helbert
+        
+        
+        if gt_assign:
+            all_targets_dict = {
+                'box_cls_labels': cls_labels,
+                'box_reg_targets': bbox_targets,
+                'reg_weights': reg_weights,
+                'gt_assignment': gt_assignment,                             # Changes made by Helbert
+            }
+        else:
+            all_targets_dict = {
+                'box_cls_labels': cls_labels,
+                'box_reg_targets': bbox_targets,
+                'reg_weights': reg_weights,                          
+            }
         return all_targets_dict
 
     def assign_targets_single(self, anchors, gt_boxes, gt_classes, matched_threshold=0.6, unmatched_threshold=0.45):
@@ -164,7 +185,7 @@ class AxisAlignedTargetAssigner(object):
             bg_inds = (anchor_to_gt_max < unmatched_threshold).nonzero()[:, 0]
         else:
             bg_inds = torch.arange(num_anchors, device=anchors.device)
-
+        
         fg_inds = (labels > 0).nonzero()[:, 0]
 
         if self.pos_fraction is not None:
@@ -202,9 +223,24 @@ class AxisAlignedTargetAssigner(object):
         else:
             reg_weights[labels > 0] = 1.0
 
-        ret_dict = {
-            'box_cls_labels': labels,
-            'box_reg_targets': bbox_targets,
-            'reg_weights': reg_weights,
-        }
+        # Changes made by Helbert
+        gt_assign = False
+        if gt_assign:
+            gt_assignment = anchors.new_zeros((num_anchors), dtype=torch.int64) + -1     # anchor to gt_box index
+            gt_assignment[fg_inds] = anchor_to_gt_argmax[fg_inds]
+
+        # Changes made by Helbert
+        if gt_assign:
+            ret_dict = {
+                'box_cls_labels': labels,
+                'box_reg_targets': bbox_targets,
+                'reg_weights': reg_weights,
+                'gt_assignment': gt_assignment
+            }
+        else:
+            ret_dict = {
+                'box_cls_labels': labels,
+                'box_reg_targets': bbox_targets,
+                'reg_weights': reg_weights,
+            }
         return ret_dict

@@ -19,21 +19,17 @@ class DataBaseSampler(object):
         self.db_infos = {}
         for class_name in class_names:
             self.db_infos[class_name] = []
-        
+            
         self.use_shared_memory = sampler_cfg.get('USE_SHARED_MEMORY', False)
-        self.weights_per_object = sampler_cfg.get('WEIGHTS_PER_OBJECT', False)                          # Changes made by Helbert
-       
+        
         for db_info_path in sampler_cfg.DB_INFO_PATH:
             db_info_path = self.root_path.resolve() / db_info_path
             with open(str(db_info_path), 'rb') as f:
                 infos = pickle.load(f)
                 [self.db_infos[cur_class].extend(infos[cur_class]) for cur_class in class_names]
-        
+
         for func_name, val in sampler_cfg.PREPARE.items():
-            if self.weights_per_object:
-                self.db_infos, self.weights_filter = getattr(self, func_name)(self.db_infos, val)       # Changes made by Helbert
-            else:
-                self.db_infos = getattr(self, func_name)(self.db_infos, val)
+            self.db_infos = getattr(self, func_name)(self.db_infos, val)
         
         self.gt_database_data_key = self.load_db_to_shared_memory() if self.use_shared_memory else None
 
@@ -51,14 +47,6 @@ class DataBaseSampler(object):
                 'pointer': len(self.db_infos[class_name]),
                 'indices': np.arange(len(self.db_infos[class_name]))
             }
-        
-        # Changes made by Helbert
-        if self.weights_per_object:
-            with open('/home/hpaat/my_exp/MTrans-U/best_model_github_pred_iou_for_reweighting.pkl', 'rb') as weights_path:
-                loss_weights = pickle.load(weights_path)
-                self.loss_weights = loss_weights[1][self.weights_filter['Car']]
-                # self.loss_weights = np.ceil(loss_weights[1])[self.weights_filter['Car']] * np.mean(loss_weights[1])           # 9105/11429
-
 
     def __getstate__(self):
         d = dict(self.__dict__)
@@ -99,41 +87,17 @@ class DataBaseSampler(object):
 
     def filter_by_difficulty(self, db_infos, removed_difficulty):
         new_db_infos = {}
-        # Changes made by Helbert
-        if self.weights_per_object:
-            new_weights_filter = {i:[] for i in db_infos.keys()}
-
         for key, dinfos in db_infos.items():
             pre_len = len(dinfos)
             new_db_infos[key] = [
                 info for info in dinfos
                 if info['difficulty'] not in removed_difficulty
             ]
-
-            if self.weights_per_object:
-                new_filter = [info['difficulty'] not in removed_difficulty for info in dinfos]
-                
-                true_cnt = 0
-                for bool_value in self.weights_filter[key]:
-                    if bool_value == True:
-                        new_weights_filter[key].append(bool(bool_value*new_filter[true_cnt]))
-                        true_cnt += 1
-                    else:
-                        new_weights_filter[key].append(bool_value)
-
             if self.logger is not None:
                 self.logger.info('Database filter by difficulty %s: %d => %d' % (key, pre_len, len(new_db_infos[key])))
-        
-        if self.weights_per_object:
-            return new_db_infos, new_weights_filter
-        else:
-            return new_db_infos
+        return new_db_infos
 
     def filter_by_min_points(self, db_infos, min_gt_points_list):
-        # Changes made by Helbert
-        if self.weights_per_object:
-            weights_filter = {i:[] for i in db_infos.keys()}
-
         for name_num in min_gt_points_list:
             name, min_num = name_num.split(':')
             min_num = int(min_num)
@@ -143,22 +107,12 @@ class DataBaseSampler(object):
                     if info['num_points_in_gt'] >= min_num:
                         filtered_infos.append(info)
 
-                    # Changes made by Helbert    
-                    if self.weights_per_object:
-                        if info['num_points_in_gt'] >= min_num:
-                            weights_filter[name].append(True)
-                        else:
-                            weights_filter[name].append(False)
-
                 if self.logger is not None:
                     self.logger.info('Database filter by min points %s: %d => %d' %
                                      (name, len(db_infos[name]), len(filtered_infos)))
                 db_infos[name] = filtered_infos
 
-        if self.weights_per_object:
-            return db_infos, weights_filter
-        else:
-            return db_infos
+        return db_infos
 
     def sample_with_fixed_number(self, class_name, sample_group):
         """
@@ -174,11 +128,10 @@ class DataBaseSampler(object):
             pointer = 0
 
         sampled_dict = [self.db_infos[class_name][idx] for idx in indices[pointer: pointer + sample_num]]
-        return_indices = indices[pointer: pointer + sample_num]                 # Changes made by Helbert
         pointer += sample_num
         sample_group['pointer'] = pointer
         sample_group['indices'] = indices
-        return sampled_dict, return_indices                                     # Changes made by Helbert       
+        return sampled_dict
 
     @staticmethod
     def put_boxes_on_road_planes(gt_boxes, road_planes, calib):
@@ -270,8 +223,7 @@ class DataBaseSampler(object):
                 num_gt = np.sum(class_name == gt_names)
                 sample_group['sample_num'] = str(int(self.sample_class_num[class_name]) - num_gt)
             if int(sample_group['sample_num']) > 0:
-              
-                sampled_dict, sampled_indices = self.sample_with_fixed_number(class_name, sample_group)
+                sampled_dict = self.sample_with_fixed_number(class_name, sample_group)
 
                 sampled_boxes = np.stack([x['box3d_lidar'] for x in sampled_dict], axis=0).astype(np.float32)
 
@@ -288,13 +240,6 @@ class DataBaseSampler(object):
 
                 existed_boxes = np.concatenate((existed_boxes, valid_sampled_boxes), axis=0)
                 total_valid_sampled_dict.extend(valid_sampled_dict)
-             
-                # Changes made by Helbert
-                if self.weights_per_object:
-                    sampled_indices = sampled_indices[valid_mask]
-                    valid_sampled_weights = self.loss_weights[sampled_indices]
-                    try: data_dict['loss_weights'] = np.concatenate((data_dict['loss_weights'], valid_sampled_weights), axis = None)
-                    except: print("Loss weights not loaded!")
 
         sampled_gt_boxes = existed_boxes[gt_boxes.shape[0]:, :]
         if total_valid_sampled_dict.__len__() > 0:

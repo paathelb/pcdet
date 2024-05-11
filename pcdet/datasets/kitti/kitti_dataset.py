@@ -33,14 +33,24 @@ class KittiDataset(DatasetTemplate):
         self.kitti_infos = []
         self.include_kitti_data(self.mode)
 
-        # CHANGE 
+        # Changes made by Helbert
         with open('/home/hpaat/pcdet/data/kitti/segpts/!all_pts.pkl', 'rb') as save_folder:
             all_segpts_dic = pickle.load(save_folder)
             self.all_segpts_dic = all_segpts_dic
-
+        
         # Changes made by Helbert
-        with open('/home/hpaat/my_exp/MTrans-U/uncertaintys_pred_iou_for_reweighting.pkl', 'rb') as weights_path:
+        with open('/home/hpaat/my_exp/MTrans-U/best_model_github_pred_iou_for_reweighting.pkl', 'rb') as weights_path:
+        # with open('/home/hpaat/my_exp/MTrans-U/uncertaintys_gt_iou_for_reweighting.pkl', 'rb') as weights_path:
             loss_weights = pickle.load(weights_path)
+            # Thresholding
+            # for idx, iou in enumerate(loss_weights[1]):
+            #     if iou < 0.50:
+            #         loss_weights[1][idx] = float(0)
+            #     elif 0.50 <= iou < 0.75:
+            #         loss_weights[1][idx] = float(1)
+            #     elif iou >= 0.75:
+            #         loss_weights[1][idx] = float(2)
+         
             self.loss_weights = loss_weights
 
     def include_kitti_data(self, mode):
@@ -182,7 +192,7 @@ class KittiDataset(DatasetTemplate):
 
             if has_label:
                 obj_list = self.get_label(sample_idx)
-                if len(obj_list) == 0: return None
+                if len(obj_list) == 0: return None          # change for empty labels
                 annotations = {}
                 annotations['name'] = np.array([obj.cls_type for obj in obj_list])
                 annotations['truncated'] = np.array([obj.truncation for obj in obj_list])
@@ -378,7 +388,6 @@ class KittiDataset(DatasetTemplate):
 
         # with open('/home/hpaat/pcdet/output/kitti_models/pointrcnn/ftrans_666_pcdetaug/val_det_annos.pkl', 'wb') as handle:       # changed by Helbert PAAT
         #     pickle.dump(eval_det_annos, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        # import pdb; pdb.set_trace()
         
         ##################################################################################################################################################################
         # changed by Helbert PAAT
@@ -512,7 +521,7 @@ class KittiDataset(DatasetTemplate):
         frame_list = self.loss_weights[0]
         weight_list = self.loss_weights[1]
         input_dict['loss_weights'] = np.array([iou for idx, iou in enumerate(weight_list) if frame_list[idx] == input_dict["frame_id"]])
-
+        
         data_dict = self.prepare_data(data_dict=input_dict)
 
         data_dict['image_shape'] = img_shape
@@ -539,7 +548,7 @@ def create_kitti_infos(dataset_cfg, class_names, data_path, save_path, workers=4
     trainval_filename = save_path / 'kitti_infos_trainval.pkl'
     test_filename = save_path / 'kitti_infos_test.pkl'
 
-    print('---------------Start to generate data infos---------------')
+    # print('---------------Start to generate data infos---------------')
 
     dataset.set_split(train_split)
     kitti_infos_train = dataset.get_infos(num_workers=workers, has_label=True, count_inside_pts=True)

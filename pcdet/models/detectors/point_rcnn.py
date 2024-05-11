@@ -7,6 +7,7 @@ class PointRCNN(Detector3DTemplate):
         self.module_list = self.build_networks()
 
     def forward(self, batch_dict):
+        import pdb; pdb.set_trace()
         for cur_module in self.module_list:
             batch_dict = cur_module(batch_dict)
 

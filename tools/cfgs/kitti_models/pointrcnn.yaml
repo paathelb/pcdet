@@ -1,15 +1,16 @@
-CLASS_NAMES: ['Car']                    #, 'Pedestrian', 'Cyclist']        # changes made by Helbert
+CLASS_NAMES: ['Car']                    #, 'Pedestrian', 'Cyclist']                                                         # Changes made by Helbert
 
 DATA_CONFIG:
     _BASE_CONFIG_: cfgs/dataset_configs/kitti_dataset.yaml
 
     DATA_AUGMENTOR:
-        DISABLE_AUG_LIST: ['gt_sampling', 'random_world_flip', 'random_world_rotation', 'random_world_scaling']     # changes made by Helbert
+        DISABLE_AUG_LIST: []    # ['gt_sampling', 'random_world_flip', 'random_world_rotation', 'random_world_scaling']     # Changes made by Helbert
         AUG_CONFIG_LIST:
             - NAME: gt_sampling
               USE_ROAD_PLANE: False
               DB_INFO_PATH:
                   - kitti_dbinfos_train.pkl
+              WEIGHTS_PER_OBJECT: False                                                                                      # Changes made by Helbert
               PREPARE: {
                  filter_by_min_points: ['Car:5', 'Pedestrian:5', 'Cyclist:5'],
                  filter_by_difficulty: [-1],
@@ -66,6 +67,7 @@ MODEL:
         CLS_FC: [256, 256]
         REG_FC: [256, 256]
         CLASS_AGNOSTIC: False
+        WEIGHTED: False      # Changes made by Helbert
         USE_POINT_FEATURES_BEFORE_FUSION: False
         TARGET_CONFIG:
             GT_EXTRA_WIDTH: [0.2, 0.2, 0.2]
@@ -90,6 +92,7 @@ MODEL:
     ROI_HEAD:
         NAME: PointRCNNHead
         CLASS_AGNOSTIC: True
+        WEIGHTED: False      # Changes made by Helbert
 
         ROI_POINT_POOL:
             POOL_EXTRA_WIDTH: [0.0, 0.0, 0.0]

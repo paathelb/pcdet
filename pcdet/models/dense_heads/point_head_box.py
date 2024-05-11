@@ -99,6 +99,9 @@ class PointHeadBox(PointHeadTemplate):
             targets_dict = self.assign_targets(batch_dict)
             ret_dict['point_cls_labels'] = targets_dict['point_cls_labels']
             ret_dict['point_box_labels'] = targets_dict['point_box_labels']
+            ret_dict['box_idxs_of_pts_batch'] = targets_dict['box_idxs_of_pts_batch']       # Changes made by Helbert
+            ret_dict['loss_weights'] = batch_dict['loss_weights']                           # Changes made by Helbert
+            ret_dict['batch_size'] = batch_dict['batch_size']                               # Changes made by Helbert
 
         if not self.training or self.predict_boxes_when_training:
             point_cls_preds, point_box_preds = self.generate_predicted_boxes(

@@ -14,6 +14,7 @@ class PointHeadTemplate(nn.Module):
 
         self.build_losses(self.model_cfg.LOSS_CONFIG)
         self.forward_ret_dict = None
+        self.weights_per_object = model_cfg.WEIGHTED 
 
     def build_losses(self, losses_cfg):
         self.add_module(
@@ -75,6 +76,8 @@ class PointHeadTemplate(nn.Module):
         point_cls_labels = points.new_zeros(points.shape[0]).long()
         point_box_labels = gt_boxes.new_zeros((points.shape[0], 8)) if ret_box_labels else None
         point_part_labels = gt_boxes.new_zeros((points.shape[0], 3)) if ret_part_labels else None
+        box_idxs_of_pts_batch = points.new_zeros(0).long()                                          # Changes made by Helbert
+
         for k in range(batch_size):
             bs_mask = (bs_idx == k)
             points_single = points[bs_mask][:, 1:4]
@@ -88,7 +91,7 @@ class PointHeadTemplate(nn.Module):
                     points_single.unsqueeze(dim=0), extend_gt_boxes[k:k+1, :, 0:7].contiguous()
                 ).long().squeeze(dim=0)
                 fg_flag = box_fg_flag
-                ignore_flag = fg_flag ^ (extend_box_idxs_of_pts >= 0)
+                ignore_flag = fg_flag ^ (extend_box_idxs_of_pts >= 0)                               # if not the same
                 point_cls_labels_single[ignore_flag] = -1
             elif use_ball_constraint:
                 box_centers = gt_boxes[k][box_idxs_of_pts][:, 0:3].clone()
@@ -120,11 +123,14 @@ class PointHeadTemplate(nn.Module):
                 offset = torch.tensor([0.5, 0.5, 0.5]).view(1, 3).type_as(transformed_points)
                 point_part_labels_single[fg_flag] = (transformed_points / gt_box_of_fg_points[:, 3:6]) + offset
                 point_part_labels[bs_mask] = point_part_labels_single
+            
+            box_idxs_of_pts_batch = torch.cat((box_idxs_of_pts_batch, box_idxs_of_pts))             # Changes made by Helbert
 
         targets_dict = {
             'point_cls_labels': point_cls_labels,
             'point_box_labels': point_box_labels,
-            'point_part_labels': point_part_labels
+            'point_part_labels': point_part_labels,
+            'box_idxs_of_pts_batch': box_idxs_of_pts_batch                                                                                        # Changes made by Helbert
         }
         return targets_dict
 
@@ -170,19 +176,36 @@ class PointHeadTemplate(nn.Module):
         return point_loss_part, tb_dict
 
     def get_box_layer_loss(self, tb_dict=None):
-        pos_mask = self.forward_ret_dict['point_cls_labels'] > 0        # 16384
-        point_box_labels = self.forward_ret_dict['point_box_labels']    # 16384 x 8
-        point_box_preds = self.forward_ret_dict['point_box_preds']      # 16384 x 8
+    
+        pos_mask = self.forward_ret_dict['point_cls_labels'] > 0        # 16384B
+        point_box_labels = self.forward_ret_dict['point_box_labels']    # 16384B x 8
+        point_box_preds = self.forward_ret_dict['point_box_preds']      # 16384B x 8
 
         reg_weights = pos_mask.float()
         pos_normalizer = pos_mask.sum().float()
         reg_weights /= torch.clamp(pos_normalizer, min=1.0)
 
+        # Changes made by Helbert
+        if self.weights_per_object:
+            batch_gt_assignment = self.forward_ret_dict['box_idxs_of_pts_batch'].reshape(self.forward_ret_dict['batch_size'], -1)
+            loss_weights = self.forward_ret_dict['loss_weights'].squeeze(-1)
+            zeros = torch.zeros((loss_weights.shape[0],1)).to(loss_weights.device)
+            loss_weights = torch.cat((loss_weights,zeros), dim=1)
+            batch_loss_weights = pos_mask.new_zeros((loss_weights.shape[0], batch_gt_assignment.shape[1]), dtype=torch.float32)
+            for index in range(loss_weights.shape[0]):
+                batch_loss_weights[index] = loss_weights[index][batch_gt_assignment[index]].squeeze(-1)
+
         point_loss_box_src = self.reg_loss_func(
             point_box_preds[None, ...], point_box_labels[None, ...], weights=reg_weights[None, ...]
         )
-        point_loss_box = point_loss_box_src.sum()
+        
+        # Changes made by Helbert
+        if self.weights_per_object:
+            point_loss_box_src_sum = point_loss_box_src.sum()
+            point_loss_box_src = point_loss_box_src * batch_loss_weights.reshape(1,-1,1)
+            point_loss_box_src = (point_loss_box_src_sum / (torch.sum(point_loss_box_src) + 1e-5)).reshape(-1,1,1) * point_loss_box_src
 
+        point_loss_box = point_loss_box_src.sum()
         loss_weights_dict = self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS
         point_loss_box = point_loss_box * loss_weights_dict['point_box_weight']
         if tb_dict is None:

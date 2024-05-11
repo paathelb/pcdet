@@ -48,6 +48,8 @@ MODEL:
     DENSE_HEAD:
         NAME: AnchorHeadMulti
         CLASS_AGNOSTIC: False
+        WEIGHTED: False                   # Changes made by Helbert
+        WEIGHT_EXP: 2.0                   # Changes made by Helbert     # default is 1
 
         DIR_OFFSET: 0.78539
         DIR_LIMIT_OFFSET: 0.0
